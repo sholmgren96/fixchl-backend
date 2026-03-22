@@ -1,0 +1,3 @@
+node_modules
+fixchl-data.json
+.env
