@@ -13,7 +13,7 @@ const app = express()
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: NODE_ENV === 'development' ? '*' : PWA_URL,
+  origin: '*',
   credentials: true,
 }))
 app.use(express.json())
