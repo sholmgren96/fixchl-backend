@@ -34,7 +34,7 @@ app.use((req, res) => res.status(404).json({ error: `Ruta ${req.path} no encontr
 
 // ── Iniciar ─────────────────────────────────────────────────────────────────
 initDb()
-app.listen(PORT, () => {
+app.listen(process.env.PORT || PORT, () => {
   console.log(`\n🚀 FixChl Backend corriendo en http://localhost:${PORT}`)
   console.log(`   Entorno: ${NODE_ENV}`)
   console.log(`   Webhook WA: http://localhost:${PORT}/webhook/whatsapp\n`)
