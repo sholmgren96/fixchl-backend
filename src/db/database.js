@@ -1,322 +1,26 @@
-import fs from 'fs'
+import pg from 'pg'
+import 'dotenv/config'
 
-const DB_FILE = './fixchl-data.json'
+const { Pool } = pg
 
-const EMPTY_DB = {
-  tecnicos: [], tecnico_comunas: [], tecnico_categorias: [],
-  trabajos: [], mensajes: [], calificaciones: [], sesiones_bot: [],
-  disponibilidad: [], bloques_ocupados: [],
-  _counters: { tecnicos: 0, trabajos: 0, mensajes: 0, calificaciones: 0, sesiones_bot: 0, disponibilidad: 0, bloques: 0 }
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+})
+
+export async function query(sql, params = []) {
+  const client = await pool.connect()
+  try {
+    const res = await client.query(sql, params)
+    return res
+  } finally {
+    client.release()
+  }
 }
 
-function loadDb() {
-  if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify(EMPTY_DB, null, 2))
-  const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))
-  // Migrar si faltan tablas nuevas
-  if (!data.disponibilidad) data.disponibilidad = []
-  if (!data.bloques_ocupados) data.bloques_ocupados = []
-  if (!data._counters.disponibilidad) data._counters.disponibilidad = 0
-  if (!data._counters.bloques) data._counters.bloques = 0
-  return data
-}
-
-function saveDb(data) { fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2)) }
-
-function nextId(data, table) {
-  data._counters[table] = (data._counters[table] || 0) + 1
-  return data._counters[table]
-}
-
-function now() { return new Date().toISOString() }
-
-// Duración estimada en horas por categoría
-const DURACION_POR_CATEGORIA = {
-  'Gasfiter': 2,
-  'Electricista': 2,
-  'Pintor': 4,
-  'Servicio de aseo': 3,
-  'Maestro general': 3,
-  'Otro': 2,
-}
-
-export const db = {
-  getTecnico: (id) => loadDb().tecnicos.find(t => t.id === id) || null,
-  getTecnicoByTelefono: (tel) => loadDb().tecnicos.find(t => t.telefono === tel) || null,
-  getTecnicoByRutOrTelefono: (rut, tel) => loadDb().tecnicos.find(t => t.rut === rut || t.telefono === tel) || null,
-
-  createTecnico({ nombre, rut, telefono, password }) {
-    const data = loadDb()
-    const id = nextId(data, 'tecnicos')
-    const tecnico = { id, nombre, rut, telefono, password, foto_url: null, verificado: 0, disponible: 1, rating: 0, total_jobs: 0, total_reviews: 0, created_at: now() }
-    data.tecnicos.push(tecnico)
-    saveDb(data)
-    return tecnico
-  },
-
-  updateTecnicoDisponible(id, disponible) {
-    const data = loadDb()
-    const t = data.tecnicos.find(t => t.id === id)
-    if (t) { t.disponible = disponible ? 1 : 0; saveDb(data) }
-  },
-
-  updateTecnicoRating(id, rating, totalReviews) {
-    const data = loadDb()
-    const t = data.tecnicos.find(t => t.id === id)
-    if (t) { t.rating = rating; t.total_reviews = totalReviews; saveDb(data) }
-  },
-
-  getComunas: (id) => loadDb().tecnico_comunas.filter(c => c.tecnico_id === id).map(c => c.comuna),
-
-  addComuna(tecnicoId, comuna) {
-    const data = loadDb()
-    if (data.tecnico_comunas.find(c => c.tecnico_id === tecnicoId && c.comuna === comuna)) throw new Error('Duplicado')
-    data.tecnico_comunas.push({ tecnico_id: tecnicoId, comuna })
-    saveDb(data)
-  },
-
-  deleteComuna(tecnicoId, comuna) {
-    const data = loadDb()
-    data.tecnico_comunas = data.tecnico_comunas.filter(c => !(c.tecnico_id === tecnicoId && c.comuna === comuna))
-    saveDb(data)
-  },
-
-  getCategorias: (id) => loadDb().tecnico_categorias.filter(c => c.tecnico_id === id).map(c => c.categoria),
-
-  addCategoria(tecnicoId, categoria) {
-    const data = loadDb()
-    if (data.tecnico_categorias.find(c => c.tecnico_id === tecnicoId && c.categoria === categoria)) throw new Error('Duplicado')
-    data.tecnico_categorias.push({ tecnico_id: tecnicoId, categoria })
-    saveDb(data)
-  },
-
-  deleteCategoria(tecnicoId, categoria) {
-    const data = loadDb()
-    data.tecnico_categorias = data.tecnico_categorias.filter(c => !(c.tecnico_id === tecnicoId && c.categoria === categoria))
-    saveDb(data)
-  },
-
-  getTrabajo: (id) => loadDb().trabajos.find(t => t.id === id) || null,
-
-  createTrabajo({ cliente_nombre, cliente_wa, categoria, descripcion, comuna, urgencia, fecha_agendada = null, hora_agendada = null }) {
-    const data = loadDb()
-    const id = nextId(data, 'trabajos')
-    const trabajo = { id, cliente_nombre, cliente_wa, categoria, descripcion, comuna, urgencia, fecha_agendada, hora_agendada, estado: 'buscando', tecnico_id: null, created_at: now(), accepted_at: null, completed_at: null }
-    data.trabajos.push(trabajo)
-    saveDb(data)
-    return trabajo
-  },
-
-  getTrabajosdisponibles(comunas) {
-    return loadDb().trabajos
-      .filter(t => t.estado === 'buscando' && comunas.includes(t.comuna))
-      .sort((a, b) => (a.urgencia === 'Hoy mismo' ? -1 : 1))
-  },
-
-  getMisTrabajos: (tecnicoId) => loadDb().trabajos.filter(t => t.tecnico_id === tecnicoId && ['activo','esperando_calificacion'].includes(t.estado)),
-
-  aceptarTrabajo(id, tecnicoId) {
-    const data = loadDb()
-    const t = data.trabajos.find(t => t.id === id && t.estado === 'buscando')
-    if (!t) return false
-    t.estado = 'activo'; t.tecnico_id = tecnicoId; t.accepted_at = now()
-    saveDb(data)
-    // Bloquear el horario si tiene fecha agendada
-    if (t.fecha_agendada && t.hora_agendada) {
-      const duracion = DURACION_POR_CATEGORIA[t.categoria] || 2
-      this.bloquearHorario(tecnicoId, t.fecha_agendada, t.hora_agendada, duracion, id)
-    }
-    return true
-  },
-
-  completarTrabajo(id, tecnicoId) {
-    const data = loadDb()
-    const t = data.trabajos.find(t => t.id === id && t.tecnico_id === tecnicoId && t.estado === 'activo')
-    if (!t) return false
-    t.estado = 'esperando_calificacion'; t.completed_at = now()
-    saveDb(data); return true
-  },
-
-  updateTrabajoEstado(id, estado) {
-    const data = loadDb()
-    const t = data.trabajos.find(t => t.id === id)
-    if (t) { t.estado = estado; saveDb(data) }
-  },
-
-  updateTrabajoTecnico(id, tecnicoId) {
-    const data = loadDb()
-    const t = data.trabajos.find(t => t.id === id)
-    if (t) { t.tecnico_id = tecnicoId; t.accepted_at = now(); saveDb(data) }
-  },
-
-  getMensajes: (trabajoId) => loadDb().mensajes.filter(m => m.trabajo_id === trabajoId).sort((a,b) => new Date(a.created_at) - new Date(b.created_at)),
-
-  createMensaje(trabajoId, origen, contenido) {
-    const data = loadDb()
-    const id = nextId(data, 'mensajes')
-    const msg = { id, trabajo_id: trabajoId, origen, contenido, leido: 0, created_at: now() }
-    data.mensajes.push(msg); saveDb(data); return msg
-  },
-
-  marcarLeidos(trabajoId) {
-    const data = loadDb()
-    data.mensajes.forEach(m => { if (m.trabajo_id === trabajoId && m.origen === 'cliente') m.leido = 1 })
-    saveDb(data)
-  },
-
-  countNoLeidos: (trabajoId) => loadDb().mensajes.filter(m => m.trabajo_id === trabajoId && m.origen === 'cliente' && m.leido === 0).length,
-
-  createCalificacion(trabajoId, tecnicoId, puntaje, comentario = null) {
-    const data = loadDb()
-    if (data.calificaciones.find(c => c.trabajo_id === trabajoId)) return false
-    data.calificaciones.push({ trabajo_id: trabajoId, tecnico_id: tecnicoId, puntaje, comentario, created_at: now() })
-    saveDb(data); return true
-  },
-
-  getCalificacionesTecnico(tecnicoId) {
-    const data = loadDb()
-    return data.calificaciones.filter(c => c.tecnico_id === tecnicoId)
-      .map(c => { const t = data.trabajos.find(t => t.id === c.trabajo_id); return { ...c, cliente_nombre: t?.cliente_nombre, categoria: t?.categoria, comuna: t?.comuna } })
-      .sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20)
-  },
-
-  getRatingStats(tecnicoId) {
-    const cals = loadDb().calificaciones.filter(c => c.tecnico_id === tecnicoId)
-    if (!cals.length) return { avg: 0, total: 0 }
-    return { avg: Math.round(cals.reduce((s,c) => s + c.puntaje, 0) / cals.length * 10) / 10, total: cals.length }
-  },
-
-  getSesion: (wa) => loadDb().sesiones_bot.find(s => s.cliente_wa === wa) || null,
-
-  upsertSesion(clienteWa, estado, datos, trabajoId = null) {
-    const data = loadDb()
-    let s = data.sesiones_bot.find(s => s.cliente_wa === clienteWa)
-    if (s) {
-      s.estado = estado; s.datos_temp = JSON.stringify(datos)
-      if (trabajoId !== null) s.trabajo_id = trabajoId
-      s.updated_at = now()
-    } else {
-      data.sesiones_bot.push({ id: nextId(data, 'sesiones_bot'), cliente_wa: clienteWa, estado, datos_temp: JSON.stringify(datos), trabajo_id: trabajoId, updated_at: now() })
-    }
-    saveDb(data)
-  },
-
-  buscarTecnicos(categoria, comuna) {
-    const data = loadDb()
-    return data.tecnicos.filter(t => {
-      if (!t.disponible) return false
-      return data.tecnico_categorias.some(c => c.tecnico_id === t.id && c.categoria === categoria)
-          && data.tecnico_comunas.some(c => c.tecnico_id === t.id && c.comuna === comuna)
-    }).sort((a,b) => b.rating - a.rating).slice(0, 3)
-  },
-
-  // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
-
-  // Guarda bloques de disponibilidad semanal: [{fecha, hora_inicio, hora_fin}]
-  setDisponibilidadSemana(tecnicoId, bloques) {
-    const data = loadDb()
-    // Elimina disponibilidad futura del técnico
-    const hoy = new Date().toISOString().split('T')[0]
-    data.disponibilidad = data.disponibilidad.filter(d => d.tecnico_id !== tecnicoId || d.fecha < hoy)
-    // Agrega nuevos bloques
-    bloques.forEach(b => {
-      data.disponibilidad.push({
-        id: nextId(data, 'disponibilidad'),
-        tecnico_id: tecnicoId,
-        fecha: b.fecha,
-        hora_inicio: b.hora_inicio,
-        hora_fin: b.hora_fin,
-        created_at: now()
-      })
-    })
-    saveDb(data)
-  },
-
-  getDisponibilidadTecnico(tecnicoId) {
-    const hoy = new Date().toISOString().split('T')[0]
-    return loadDb().disponibilidad
-      .filter(d => d.tecnico_id === tecnicoId && d.fecha >= hoy)
-      .sort((a,b) => a.fecha.localeCompare(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio))
-  },
-
-  // Bloquea un horario cuando se acepta un trabajo
-  bloquearHorario(tecnicoId, fecha, horaInicio, duracionHoras, trabajoId) {
-    const data = loadDb()
-    const [h, m] = horaInicio.split(':').map(Number)
-    const fin = new Date(2000, 0, 1, h + duracionHoras, m)
-    const horaFin = `${String(fin.getHours()).padStart(2,'0')}:${String(fin.getMinutes()).padStart(2,'0')}`
-    data.bloques_ocupados.push({
-      id: nextId(data, 'bloques'),
-      tecnico_id: tecnicoId,
-      trabajo_id: trabajoId,
-      fecha,
-      hora_inicio: horaInicio,
-      hora_fin: horaFin,
-      created_at: now()
-    })
-    saveDb(data)
-  },
-
-  // Busca slots disponibles en los próximos 7 días para una categoría y comuna
-  buscarSlotsDisponibles(categoria, comuna, limite = 5) {
-    const data = loadDb()
-    const hoy = new Date()
-    const horaActual = `${String(hoy.getHours()).padStart(2,'0')}:${String(hoy.getMinutes()).padStart(2,'0')}`
-    const fechaHoy = hoy.toISOString().split('T')[0]
-    const duracion = DURACION_POR_CATEGORIA[categoria] || 2
-
-    // Técnicos que tienen esa categoría y comuna
-    const tecnicos = data.tecnicos.filter(t =>
-      data.tecnico_categorias.some(c => c.tecnico_id === t.id && c.categoria === categoria) &&
-      data.tecnico_comunas.some(c => c.tecnico_id === t.id && c.comuna === comuna)
-    )
-
-    const slots = []
-
-    tecnicos.forEach(tecnico => {
-      // Disponibilidad declarada del técnico
-      const disponibilidad = data.disponibilidad.filter(d =>
-        d.tecnico_id === tecnico.id && d.fecha >= fechaHoy
-      )
-
-      disponibilidad.forEach(disp => {
-        // Bloques ya ocupados ese día
-        const bloques = data.bloques_ocupados.filter(b =>
-          b.tecnico_id === tecnico.id && b.fecha === disp.fecha
-        )
-
-        // Generar slots de 1 hora dentro del bloque disponible
-        const [hIni] = disp.hora_inicio.split(':').map(Number)
-        const [hFin] = disp.hora_fin.split(':').map(Number)
-
-        for (let h = hIni; h <= hFin - duracion; h++) {
-          const horaSlot = `${String(h).padStart(2,'0')}:00`
-          const horaSlotFin = `${String(h + duracion).padStart(2,'0')}:00`
-
-          // Saltar slots pasados de hoy
-          if (disp.fecha === fechaHoy && horaSlot <= horaActual) continue
-
-          // Verificar que no esté ocupado
-          const ocupado = bloques.some(b => !(horaSlotFin <= b.hora_inicio || horaSlot >= b.hora_fin))
-          if (!ocupado) {
-            slots.push({
-              tecnico_id: tecnico.id,
-              tecnico_nombre: tecnico.nombre,
-              tecnico_rating: tecnico.rating,
-              fecha: disp.fecha,
-              hora_inicio: horaSlot,
-              hora_fin: horaSlotFin,
-              label: `${formatFecha(disp.fecha)} ${horaSlot} — ${tecnico.nombre}`
-            })
-          }
-        }
-      })
-    })
-
-    // Ordenar por fecha y hora, limitar resultados
-    return slots
-      .sort((a,b) => a.fecha.localeCompare(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio))
-      .slice(0, limite)
-  },
+const DURACION = {
+  'Gasfiter': 2, 'Electricista': 2, 'Pintor': 4,
+  'Servicio de aseo': 3, 'Maestro general': 3, 'Otro': 2,
 }
 
 function formatFecha(fecha) {
@@ -326,5 +30,371 @@ function formatFecha(fecha) {
   return `${dias[d.getDay()]} ${d.getDate()} ${meses[d.getMonth()]}`
 }
 
-export function initDb() { loadDb(); console.log('✅ Base de datos lista en fixchl-data.json') }
+export const db = {
+
+  // ── TÉCNICOS ───────────────────────────────────────────────────────────────
+  async getTecnico(id) {
+    const r = await query('SELECT * FROM tecnicos WHERE id=$1', [id])
+    return r.rows[0] || null
+  },
+
+  async getTecnicoByTelefono(tel) {
+    const r = await query('SELECT * FROM tecnicos WHERE telefono=$1', [tel])
+    return r.rows[0] || null
+  },
+
+  async getTecnicoByRutOrTelefono(rut, tel) {
+    const r = await query('SELECT * FROM tecnicos WHERE rut=$1 OR telefono=$2', [rut, tel])
+    return r.rows[0] || null
+  },
+
+  async createTecnico({ nombre, rut, telefono, password }) {
+    const r = await query(
+      'INSERT INTO tecnicos (nombre,rut,telefono,password) VALUES ($1,$2,$3,$4) RETURNING *',
+      [nombre, rut, telefono, password]
+    )
+    return r.rows[0]
+  },
+
+  async updateTecnicoDisponible(id, disponible) {
+    await query('UPDATE tecnicos SET disponible=$1 WHERE id=$2', [disponible, id])
+  },
+
+  async updateTecnicoRating(id, rating, totalReviews) {
+    await query('UPDATE tecnicos SET rating=$1, total_reviews=$2 WHERE id=$3', [rating, totalReviews, id])
+  },
+
+  // ── COMUNAS ────────────────────────────────────────────────────────────────
+  async getComunas(id) {
+    const r = await query('SELECT comuna FROM tecnico_comunas WHERE tecnico_id=$1', [id])
+    return r.rows.map(r => r.comuna)
+  },
+
+  async addComuna(tecnicoId, comuna) {
+    await query('INSERT INTO tecnico_comunas (tecnico_id,comuna) VALUES ($1,$2) ON CONFLICT DO NOTHING', [tecnicoId, comuna])
+  },
+
+  async deleteComuna(tecnicoId, comuna) {
+    await query('DELETE FROM tecnico_comunas WHERE tecnico_id=$1 AND comuna=$2', [tecnicoId, comuna])
+  },
+
+  // ── CATEGORÍAS ─────────────────────────────────────────────────────────────
+  async getCategorias(id) {
+    const r = await query('SELECT categoria FROM tecnico_categorias WHERE tecnico_id=$1', [id])
+    return r.rows.map(r => r.categoria)
+  },
+
+  async addCategoria(tecnicoId, categoria) {
+    await query('INSERT INTO tecnico_categorias (tecnico_id,categoria) VALUES ($1,$2) ON CONFLICT DO NOTHING', [tecnicoId, categoria])
+  },
+
+  async deleteCategoria(tecnicoId, categoria) {
+    await query('DELETE FROM tecnico_categorias WHERE tecnico_id=$1 AND categoria=$2', [tecnicoId, categoria])
+  },
+
+  // ── TRABAJOS ───────────────────────────────────────────────────────────────
+  async getTrabajo(id) {
+    const r = await query('SELECT * FROM trabajos WHERE id=$1', [id])
+    return r.rows[0] || null
+  },
+
+  async createTrabajo({ cliente_nombre, cliente_wa, categoria, descripcion, comuna, urgencia, fecha_agendada=null, hora_agendada=null }) {
+    const r = await query(
+      `INSERT INTO trabajos (cliente_nombre,cliente_wa,categoria,descripcion,comuna,urgencia,fecha_agendada,hora_agendada)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [cliente_nombre, cliente_wa, categoria, descripcion, comuna, urgencia, fecha_agendada, hora_agendada]
+    )
+    return r.rows[0]
+  },
+
+  async getTrabajosdisponibles(comunas) {
+    const r = await query(
+      `SELECT * FROM trabajos WHERE estado='buscando' AND comuna=ANY($1) ORDER BY urgencia DESC, created_at DESC`,
+      [comunas]
+    )
+    return r.rows
+  },
+
+  async getMisTrabajos(tecnicoId) {
+    const r = await query(
+      `SELECT * FROM trabajos WHERE tecnico_id=$1 AND estado IN ('activo','esperando_calificacion') ORDER BY accepted_at DESC`,
+      [tecnicoId]
+    )
+    return r.rows
+  },
+
+  async aceptarTrabajo(id, tecnicoId) {
+    const r = await query(
+      `UPDATE trabajos SET estado='activo', tecnico_id=$1, accepted_at=NOW() WHERE id=$2 AND estado='buscando' RETURNING *`,
+      [tecnicoId, id]
+    )
+    if (!r.rows[0]) return false
+    const t = r.rows[0]
+    if (t.fecha_agendada && t.hora_agendada) {
+      const duracion = DURACION[t.categoria] || 2
+      await this.bloquearHorario(tecnicoId, t.fecha_agendada, t.hora_agendada, duracion, id)
+    }
+    return true
+  },
+
+  async completarTrabajo(id, tecnicoId) {
+    const r = await query(
+      `UPDATE trabajos SET estado='esperando_calificacion', completed_at=NOW() WHERE id=$1 AND tecnico_id=$2 AND estado='activo' RETURNING id`,
+      [id, tecnicoId]
+    )
+    return !!r.rows[0]
+  },
+
+  async updateTrabajoEstado(id, estado) {
+    await query('UPDATE trabajos SET estado=$1 WHERE id=$2', [estado, id])
+  },
+
+  async updateTrabajoTecnico(id, tecnicoId) {
+    await query('UPDATE trabajos SET tecnico_id=$1, accepted_at=NOW() WHERE id=$2', [tecnicoId, id])
+  },
+
+  // ── MENSAJES ───────────────────────────────────────────────────────────────
+  async getMensajes(trabajoId) {
+    const r = await query('SELECT * FROM mensajes WHERE trabajo_id=$1 ORDER BY created_at ASC', [trabajoId])
+    return r.rows
+  },
+
+  async createMensaje(trabajoId, origen, contenido) {
+    const r = await query(
+      'INSERT INTO mensajes (trabajo_id,origen,contenido) VALUES ($1,$2,$3) RETURNING *',
+      [trabajoId, origen, contenido]
+    )
+    return r.rows[0]
+  },
+
+  async marcarLeidos(trabajoId) {
+    await query(`UPDATE mensajes SET leido=true WHERE trabajo_id=$1 AND origen='cliente' AND leido=false`, [trabajoId])
+  },
+
+  async countNoLeidos(trabajoId) {
+    const r = await query(`SELECT COUNT(*) FROM mensajes WHERE trabajo_id=$1 AND origen='cliente' AND leido=false`, [trabajoId])
+    return parseInt(r.rows[0].count)
+  },
+
+  // ── CALIFICACIONES ─────────────────────────────────────────────────────────
+  async createCalificacion(trabajoId, tecnicoId, puntaje, comentario=null) {
+    try {
+      await query(
+        'INSERT INTO calificaciones (trabajo_id,tecnico_id,puntaje,comentario) VALUES ($1,$2,$3,$4)',
+        [trabajoId, tecnicoId, puntaje, comentario]
+      )
+      return true
+    } catch { return false }
+  },
+
+  async getCalificacionesTecnico(tecnicoId) {
+    const r = await query(
+      `SELECT c.*, t.cliente_nombre, t.categoria, t.comuna FROM calificaciones c
+       JOIN trabajos t ON t.id=c.trabajo_id WHERE c.tecnico_id=$1 ORDER BY c.created_at DESC LIMIT 20`,
+      [tecnicoId]
+    )
+    return r.rows
+  },
+
+  async getRatingStats(tecnicoId) {
+    const r = await query(
+      'SELECT AVG(puntaje) as avg, COUNT(*) as total FROM calificaciones WHERE tecnico_id=$1',
+      [tecnicoId]
+    )
+    return { avg: Math.round((r.rows[0].avg || 0) * 10) / 10, total: parseInt(r.rows[0].total) }
+  },
+
+  // ── SESIONES BOT ───────────────────────────────────────────────────────────
+  async getSesion(wa) {
+    const r = await query('SELECT * FROM sesiones_bot WHERE cliente_wa=$1', [wa])
+    return r.rows[0] || null
+  },
+
+  async upsertSesion(clienteWa, estado, datos, trabajoId=null) {
+    await query(
+      `INSERT INTO sesiones_bot (cliente_wa,estado,datos_temp,trabajo_id,updated_at)
+       VALUES ($1,$2,$3,$4,NOW())
+       ON CONFLICT (cliente_wa) DO UPDATE SET
+         estado=EXCLUDED.estado, datos_temp=EXCLUDED.datos_temp,
+         trabajo_id=COALESCE(EXCLUDED.trabajo_id, sesiones_bot.trabajo_id),
+         updated_at=NOW()`,
+      [clienteWa, estado, JSON.stringify(datos), trabajoId]
+    )
+  },
+
+  // ── MATCHING ───────────────────────────────────────────────────────────────
+  async buscarTecnicos(categoria, comuna) {
+    const r = await query(
+      `SELECT t.id, t.nombre, t.rating, t.total_jobs FROM tecnicos t
+       JOIN tecnico_categorias tc ON tc.tecnico_id=t.id AND tc.categoria=$1
+       JOIN tecnico_comunas cm ON cm.tecnico_id=t.id AND cm.comuna=$2
+       WHERE t.disponible=true ORDER BY t.rating DESC LIMIT 3`,
+      [categoria, comuna]
+    )
+    return r.rows
+  },
+
+  // ── DISPONIBILIDAD ─────────────────────────────────────────────────────────
+  async setDisponibilidadSemana(tecnicoId, bloques) {
+    await query('DELETE FROM disponibilidad WHERE tecnico_id=$1 AND fecha>=CURRENT_DATE', [tecnicoId])
+    for (const b of bloques) {
+      await query(
+        'INSERT INTO disponibilidad (tecnico_id,fecha,hora_inicio,hora_fin) VALUES ($1,$2,$3,$4)',
+        [tecnicoId, b.fecha, b.hora_inicio, b.hora_fin]
+      )
+    }
+  },
+
+  async getDisponibilidadTecnico(tecnicoId) {
+    const r = await query(
+      'SELECT * FROM disponibilidad WHERE tecnico_id=$1 AND fecha>=CURRENT_DATE ORDER BY fecha, hora_inicio',
+      [tecnicoId]
+    )
+    return r.rows
+  },
+
+  async bloquearHorario(tecnicoId, fecha, horaInicio, duracionHoras, trabajoId) {
+    const [h, m] = horaInicio.split(':').map(Number)
+    const fin = new Date(2000, 0, 1, h + duracionHoras, m)
+    const horaFin = `${String(fin.getHours()).padStart(2,'0')}:${String(fin.getMinutes()).padStart(2,'0')}`
+    await query(
+      'INSERT INTO bloques_ocupados (tecnico_id,trabajo_id,fecha,hora_inicio,hora_fin) VALUES ($1,$2,$3,$4,$5)',
+      [tecnicoId, trabajoId, fecha, horaInicio, horaFin]
+    )
+  },
+
+  async buscarSlotsDisponibles(categoria, comuna, limite=5) {
+    const r = await query(
+      `SELECT t.id, t.nombre, t.rating, d.fecha, d.hora_inicio, d.hora_fin
+       FROM tecnicos t
+       JOIN tecnico_categorias tc ON tc.tecnico_id=t.id AND tc.categoria=$1
+       JOIN tecnico_comunas cm ON cm.tecnico_id=t.id AND cm.comuna=$2
+       JOIN disponibilidad d ON d.tecnico_id=t.id AND d.fecha>=CURRENT_DATE
+       ORDER BY d.fecha, d.hora_inicio`,
+      [categoria, comuna]
+    )
+
+    const duracion = DURACION[categoria] || 2
+    const slots = []
+
+    for (const row of r.rows) {
+      const bloques = await query(
+        'SELECT hora_inicio, hora_fin FROM bloques_ocupados WHERE tecnico_id=$1 AND fecha=$2',
+        [row.id, row.fecha]
+      )
+      const [hIni] = row.hora_inicio.split(':').map(Number)
+      const [hFin] = row.hora_fin.split(':').map(Number)
+
+      for (let h = hIni; h <= hFin - duracion; h++) {
+        const horaSlot = `${String(h).padStart(2,'0')}:00`
+        const horaSlotFin = `${String(h + duracion).padStart(2,'0')}:00`
+        const ocupado = bloques.rows.some(b => !(horaSlotFin <= b.hora_inicio || horaSlot >= b.hora_fin))
+        if (!ocupado) {
+          const fechaStr = typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0]
+          slots.push({
+            tecnico_id: row.id,
+            tecnico_nombre: row.nombre,
+            tecnico_rating: row.rating,
+            fecha: fechaStr,
+            hora_inicio: horaSlot,
+            hora_fin: horaSlotFin,
+            label: `${formatFecha(fechaStr)} ${horaSlot} — ${row.nombre}`
+          })
+        }
+      }
+      if (slots.length >= limite) break
+    }
+    return slots.slice(0, limite)
+  },
+}
+
+export async function initDb() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS tecnicos (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      rut TEXT UNIQUE NOT NULL,
+      telefono TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      foto_url TEXT,
+      verificado BOOLEAN DEFAULT false,
+      disponible BOOLEAN DEFAULT true,
+      rating REAL DEFAULT 0,
+      total_jobs INTEGER DEFAULT 0,
+      total_reviews INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS tecnico_comunas (
+      id SERIAL PRIMARY KEY,
+      tecnico_id INTEGER REFERENCES tecnicos(id) ON DELETE CASCADE,
+      comuna TEXT NOT NULL,
+      UNIQUE(tecnico_id, comuna)
+    );
+    CREATE TABLE IF NOT EXISTS tecnico_categorias (
+      id SERIAL PRIMARY KEY,
+      tecnico_id INTEGER REFERENCES tecnicos(id) ON DELETE CASCADE,
+      categoria TEXT NOT NULL,
+      UNIQUE(tecnico_id, categoria)
+    );
+    CREATE TABLE IF NOT EXISTS trabajos (
+      id SERIAL PRIMARY KEY,
+      cliente_nombre TEXT NOT NULL,
+      cliente_wa TEXT NOT NULL,
+      categoria TEXT NOT NULL,
+      descripcion TEXT NOT NULL,
+      comuna TEXT NOT NULL,
+      urgencia TEXT NOT NULL,
+      fecha_agendada DATE,
+      hora_agendada TEXT,
+      estado TEXT DEFAULT 'buscando',
+      tecnico_id INTEGER REFERENCES tecnicos(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      accepted_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS mensajes (
+      id SERIAL PRIMARY KEY,
+      trabajo_id INTEGER REFERENCES trabajos(id) ON DELETE CASCADE,
+      origen TEXT NOT NULL,
+      contenido TEXT NOT NULL,
+      leido BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS calificaciones (
+      id SERIAL PRIMARY KEY,
+      trabajo_id INTEGER UNIQUE REFERENCES trabajos(id),
+      tecnico_id INTEGER REFERENCES tecnicos(id),
+      puntaje INTEGER NOT NULL,
+      comentario TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS sesiones_bot (
+      id SERIAL PRIMARY KEY,
+      cliente_wa TEXT UNIQUE NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'inicio',
+      datos_temp TEXT,
+      trabajo_id INTEGER REFERENCES trabajos(id),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS disponibilidad (
+      id SERIAL PRIMARY KEY,
+      tecnico_id INTEGER REFERENCES tecnicos(id) ON DELETE CASCADE,
+      fecha DATE NOT NULL,
+      hora_inicio TEXT NOT NULL,
+      hora_fin TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS bloques_ocupados (
+      id SERIAL PRIMARY KEY,
+      tecnico_id INTEGER REFERENCES tecnicos(id) ON DELETE CASCADE,
+      trabajo_id INTEGER REFERENCES trabajos(id),
+      fecha DATE NOT NULL,
+      hora_inicio TEXT NOT NULL,
+      hora_fin TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `)
+  console.log('✅ Base de datos PostgreSQL lista')
+}
+
 export function getDb() { return db }
