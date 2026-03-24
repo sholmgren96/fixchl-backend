@@ -1,16 +1,16 @@
+import dns from 'dns'
+dns.setDefaultResultOrder('ipv4first')
 import pg from 'pg'
-import 'dotenv/config'
 
 const { Pool } = pg
 
-// Forzar IPv4 — Railway no tiene conectividad IPv6 a Supabase
-import dns from 'dns'
-dns.setDefaultResultOrder('ipv4first')
+const dbUrl = process.env.DATABASE_URL
+console.log('DB_URL presente:', !!dbUrl, dbUrl ? dbUrl.substring(0,40) : 'VACIA')
+if (!dbUrl) { console.error('ERROR: DATABASE_URL no definida'); process.exit(1) }
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: dbUrl,
   ssl: { rejectUnauthorized: false },
-  family: 4,
 })
 
 export async function query(sql, params = []) {
