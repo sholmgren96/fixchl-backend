@@ -3,9 +3,14 @@ import 'dotenv/config'
 
 const { Pool } = pg
 
+// Forzar IPv4 — Railway no tiene conectividad IPv6 a Supabase
+import dns from 'dns'
+dns.setDefaultResultOrder('ipv4first')
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  family: 4,
 })
 
 export async function query(sql, params = []) {
