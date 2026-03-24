@@ -5,50 +5,58 @@ import { authMiddleware } from '../middleware/auth.js'
 const router = Router()
 router.use(authMiddleware)
 
-router.get('/perfil', (req, res) => {
-  const tecnico = db.getTecnico(req.tecnico.id)
-  if (!tecnico) return res.status(404).json({ error: 'No encontrado' })
-  const { password, ...datos } = tecnico
-  res.json({ ...datos, comunas: db.getComunas(req.tecnico.id), categorias: db.getCategorias(req.tecnico.id) })
+router.get('/perfil', async (req, res) => {
+  try {
+    const tecnico = await db.getTecnico(req.tecnico.id)
+    if (!tecnico) return res.status(404).json({ error: 'No encontrado' })
+    const comunas   = await db.getComunas(tecnico.id)
+    const categorias = await db.getCategorias(tecnico.id)
+    const { password, ...rest } = tecnico
+    res.json({ ...rest, comunas, categorias })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
-router.patch('/disponible', (req, res) => {
-  const { disponible } = req.body
-  if (typeof disponible !== 'boolean') return res.status(400).json({ error: 'disponible debe ser true o false' })
-  db.updateTecnicoDisponible(req.tecnico.id, disponible)
-  res.json({ disponible })
+router.patch('/disponible', async (req, res) => {
+  try {
+    await db.updateTecnicoDisponible(req.tecnico.id, req.body.disponible)
+    res.json({ ok: true })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
-router.get('/comunas', (req, res) => res.json({ comunas: db.getComunas(req.tecnico.id) }))
-
-router.post('/comunas', (req, res) => {
-  const { comuna } = req.body
-  if (!comuna) return res.status(400).json({ error: 'comuna requerida' })
-  try { db.addComuna(req.tecnico.id, comuna); res.status(201).json({ comuna }) }
-  catch { res.status(409).json({ error: 'Ya tienes esa comuna' }) }
+router.post('/comunas', async (req, res) => {
+  try {
+    await db.addComuna(req.tecnico.id, req.body.comuna)
+    res.json({ ok: true })
+  } catch (err) { res.status(400).json({ error: err.message }) }
 })
 
-router.delete('/comunas/:comuna', (req, res) => {
-  db.deleteComuna(req.tecnico.id, req.params.comuna)
-  res.json({ eliminada: req.params.comuna })
+router.delete('/comunas/:comuna', async (req, res) => {
+  try {
+    await db.deleteComuna(req.tecnico.id, req.params.comuna)
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ error: 'Error interno' }) }
 })
 
-router.post('/categorias', (req, res) => {
-  const { categoria } = req.body
-  if (!categoria) return res.status(400).json({ error: 'categoria requerida' })
-  try { db.addCategoria(req.tecnico.id, categoria); res.status(201).json({ categoria }) }
-  catch { res.status(409).json({ error: 'Ya tienes esa categoría' }) }
+router.post('/categorias', async (req, res) => {
+  try {
+    await db.addCategoria(req.tecnico.id, req.body.categoria)
+    res.json({ ok: true })
+  } catch (err) { res.status(400).json({ error: err.message }) }
 })
 
-router.delete('/categorias/:cat', (req, res) => {
-  db.deleteCategoria(req.tecnico.id, req.params.cat)
-  res.json({ eliminada: req.params.cat })
+router.delete('/categorias/:categoria', async (req, res) => {
+  try {
+    await db.deleteCategoria(req.tecnico.id, req.params.categoria)
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ error: 'Error interno' }) }
 })
 
-router.get('/estadisticas', (req, res) => {
-  const tecnico = db.getTecnico(req.tecnico.id)
-  const calificaciones = db.getCalificacionesTecnico(req.tecnico.id)
-  res.json({ rating: tecnico.rating, total_jobs: tecnico.total_jobs, total_reviews: tecnico.total_reviews, calificaciones })
+router.get('/rendimiento', async (req, res) => {
+  try {
+    const tecnico = await db.getTecnico(req.tecnico.id)
+    const calificaciones = await db.getCalificacionesTecnico(req.tecnico.id)
+    res.json({ rating: tecnico.rating, total_reviews: tecnico.total_reviews, total_jobs: tecnico.total_jobs, calificaciones })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
 export default router

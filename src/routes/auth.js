@@ -12,20 +12,19 @@ router.post('/registro', async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios' })
 
     const todasCategorias = categorias?.length ? categorias : (categoria ? [categoria] : [])
-    if (todasCategorias.length === 0)
+    if (!todasCategorias.length)
       return res.status(400).json({ error: 'Selecciona al menos una categoría' })
-
     if (!comunas?.length)
       return res.status(400).json({ error: 'Selecciona al menos una comuna' })
 
-    if (db.getTecnicoByRutOrTelefono(rut, telefono))
-      return res.status(409).json({ error: 'Ya existe un técnico con ese RUT o teléfono' })
+    const existe = await db.getTecnicoByRutOrTelefono(rut, telefono)
+    if (existe) return res.status(409).json({ error: 'Ya existe un técnico con ese RUT o teléfono' })
 
     const hash = await bcrypt.hash(password, 10)
-    const tecnico = db.createTecnico({ nombre, rut, telefono, password: hash })
+    const tecnico = await db.createTecnico({ nombre, rut, telefono, password: hash })
 
-    todasCategorias.forEach(c => { try { db.addCategoria(tecnico.id, c) } catch {} })
-    comunas.forEach(c => { try { db.addComuna(tecnico.id, c) } catch {} })
+    for (const c of todasCategorias) { try { await db.addCategoria(tecnico.id, c) } catch {} }
+    for (const c of comunas) { try { await db.addComuna(tecnico.id, c) } catch {} }
 
     const token = signToken({ id: tecnico.id, nombre, telefono })
     res.status(201).json({ token, tecnico: { id: tecnico.id, nombre, rut, telefono } })
@@ -37,7 +36,7 @@ router.post('/login', async (req, res) => {
     const { telefono, password } = req.body
     if (!telefono || !password) return res.status(400).json({ error: 'Teléfono y contraseña requeridos' })
 
-    const tecnico = db.getTecnicoByTelefono(telefono)
+    const tecnico = await db.getTecnicoByTelefono(telefono)
     if (!tecnico) return res.status(401).json({ error: 'Credenciales incorrectas' })
 
     const ok = await bcrypt.compare(password, tecnico.password)
