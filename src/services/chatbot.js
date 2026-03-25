@@ -9,9 +9,9 @@ export async function procesarMensaje(numeroWA, texto) {
   const numero = numeroWA.replace('whatsapp:', '')
   const msg    = texto.trim()
 
-  let sesion = db.getSesion(numero)
+  let sesion = await db.getSesion(numero)
   if (!sesion) {
-    db.upsertSesion(numero, 'inicio', {})
+    await db.upsertSesion(numero, 'inicio', {})
     sesion = { cliente_wa: numero, estado: 'inicio', datos_temp: '{}', trabajo_id: null }
   }
 
@@ -24,7 +24,7 @@ export async function procesarMensaje(numeroWA, texto) {
       'Ver servicios',
       [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
     )
-    db.upsertSesion(numero, 'esperando_categoria', datos)
+    await db.upsertSesion(numero, 'esperando_categoria', datos)
     return
   }
 
@@ -41,7 +41,7 @@ export async function procesarMensaje(numeroWA, texto) {
     datos.categoria = categoria
     await enviarMensajeWA(numero,
       `Entendido, *${categoria}* 👍\n\nCuéntame brevemente el problema.\n\n_Ej: "llave que gotea", "sin luz en dormitorio"_`)
-    db.upsertSesion(numero, 'esperando_descripcion', datos)
+    await db.upsertSesion(numero, 'esperando_descripcion', datos)
     return
   }
 
@@ -51,7 +51,7 @@ export async function procesarMensaje(numeroWA, texto) {
     datos.descripcion = msg
     await enviarLista(numero, '¿En qué comuna de Santiago estás?', 'Ver comunas',
       [{ rows: COMUNAS.map(c => ({ id: c, title: c })) }])
-    db.upsertSesion(numero, 'esperando_comuna', datos)
+    await db.upsertSesion(numero, 'esperando_comuna', datos)
     return
   }
 
@@ -68,7 +68,7 @@ export async function procesarMensaje(numeroWA, texto) {
     datos.comuna = comuna
     await enviarBotones(numero, '¿Con qué urgencia lo necesitas?',
       URGENCIAS.map(u => ({ id: u, title: u })))
-    db.upsertSesion(numero, 'esperando_urgencia', datos)
+    await db.upsertSesion(numero, 'esperando_urgencia', datos)
     return
   }
 
@@ -85,30 +85,27 @@ export async function procesarMensaje(numeroWA, texto) {
     datos.urgencia = urgencia
 
     if (urgencia === 'Elegir fecha') {
-      // Mostrar slots disponibles
       return await mostrarSlots(numero, datos, sesion)
     }
 
-    // Buscar técnicos disponibles ahora
-    const tecnicos = db.buscarTecnicos(datos.categoria, datos.comuna)
+    const tecnicos = await db.buscarTecnicos(datos.categoria, datos.comuna)
 
     if (!tecnicos.length) {
-      // No hay nadie disponible ahora — ofrecer agenda
-      const slots = db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 3)
+      const slots = await db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 3)
       if (slots.length) {
         datos.slots = slots
         await enviarLista(numero,
           `No hay técnicos disponibles ahora mismo en ${datos.comuna} 😕\n\n¿Te agendo para uno de estos horarios?`,
           'Ver horarios',
-          [{ rows: slots.map((s,i) => ({ id: String(i), title: s.label })) }]
+          [{ rows: slots.map((s, i) => ({ id: String(i), title: s.label })) }]
         )
-        db.upsertSesion(numero, 'esperando_slot', datos)
+        await db.upsertSesion(numero, 'esperando_slot', datos)
       } else {
         await enviarBotones(numero,
-          `No hay técnicos disponibles en ${datos.comuna} ahora mismo 😕\n\n¿Quieres que te avisemos cuando haya uno disponible?`,
+          `No hay técnicos disponibles en ${datos.comuna} ahora mismo 😕\n\n¿Quieres que te avisemos cuando haya uno?`,
           [{ id: 'si_avisar', title: 'Sí, avísame' }, { id: 'no', title: 'No, gracias' }]
         )
-        db.upsertSesion(numero, 'esperando_aviso', datos)
+        await db.upsertSesion(numero, 'esperando_aviso', datos)
       }
       return
     }
@@ -117,42 +114,35 @@ export async function procesarMensaje(numeroWA, texto) {
     return
   }
 
-  // ── ESPERANDO SLOT (fecha agendada) ───────────────────────────────────────
+  // ── ESPERANDO SLOT ────────────────────────────────────────────────────────
   if (sesion.estado === 'esperando_slot') {
     const idx = parseInt(msg)
-    const slot = datos.slots?.[isNaN(idx) ? -1 : idx]
-
-    // También buscar por nombre del slot
+    const slotPorIdx = datos.slots?.[isNaN(idx) ? -1 : idx]
     const slotPorNombre = datos.slots?.find(s => s.label.toLowerCase().includes(msg.toLowerCase()))
-    const slotElegido = slot || slotPorNombre
+    const slotElegido = slotPorIdx || slotPorNombre
 
     if (!slotElegido) {
       await enviarMensajeWA(numero, 'Por favor selecciona uno de los horarios disponibles.')
       return
     }
 
-    datos.fecha_agendada = slotElegido.fecha
-    datos.hora_agendada  = slotElegido.hora_inicio
-    datos.tecnico_preseleccionado = { id: slotElegido.tecnico_id, nombre: slotElegido.tecnico_nombre }
-
-    const trabajo = db.createTrabajo({
+    const trabajo = await db.createTrabajo({
       cliente_nombre: 'Cliente',
       cliente_wa: numero,
       categoria: datos.categoria,
       descripcion: datos.descripcion,
       comuna: datos.comuna,
       urgencia: datos.urgencia || 'Agendado',
-      fecha_agendada: datos.fecha_agendada,
-      hora_agendada: datos.hora_agendada,
+      fecha_agendada: slotElegido.fecha,
+      hora_agendada: slotElegido.hora_inicio,
     })
-    datos.trabajo_id = trabajo.id
 
-    db.updateTrabajoTecnico(trabajo.id, slotElegido.tecnico_id)
-    db.aceptarTrabajo(trabajo.id, slotElegido.tecnico_id)
+    await db.updateTrabajoTecnico(trabajo.id, slotElegido.tecnico_id)
+    await db.aceptarTrabajo(trabajo.id, slotElegido.tecnico_id)
 
     await enviarMensajeWA(numero,
-      `✅ ¡Listo! Quedaste agendado con *${slotElegido.tecnico_nombre}*\n\n📅 ${slotElegido.label}\n\nTe contactará antes de la visita. ¿Alguna duda puedes escribirme aquí 🙌`)
-    db.upsertSesion(numero, 'chat_activo', datos, trabajo.id)
+      `✅ ¡Listo! Quedaste agendado con *${slotElegido.tecnico_nombre}*\n\n📅 ${slotElegido.label}\n\nTe contactará antes de la visita 🙌`)
+    await db.upsertSesion(numero, 'chat_activo', datos, trabajo.id)
     return
   }
 
@@ -160,11 +150,11 @@ export async function procesarMensaje(numeroWA, texto) {
   if (sesion.estado === 'esperando_aviso') {
     if (msg === 'si_avisar' || msg.toLowerCase().includes('sí') || msg.toLowerCase().includes('si')) {
       await enviarMensajeWA(numero,
-        `Perfecto, te avisaremos cuando haya un técnico de ${datos.categoria} disponible en ${datos.comuna} 🙌\n\nPuedes escribirnos en cualquier momento para verificar.`)
+        `Perfecto, te avisaremos cuando haya un técnico de ${datos.categoria} disponible en ${datos.comuna} 🙌`)
     } else {
       await enviarMensajeWA(numero, 'Entendido. Escríbenos cuando lo necesites 👋')
     }
-    db.upsertSesion(numero, 'inicio', {})
+    await db.upsertSesion(numero, 'inicio', {})
     return
   }
 
@@ -175,7 +165,7 @@ export async function procesarMensaje(numeroWA, texto) {
     )
     if (!elegido) { await enviarMensajeWA(numero, 'Por favor selecciona un técnico de la lista.'); return }
 
-    const trabajo = db.createTrabajo({
+    const trabajo = await db.createTrabajo({
       cliente_nombre: 'Cliente',
       cliente_wa: numero,
       categoria: datos.categoria,
@@ -184,18 +174,18 @@ export async function procesarMensaje(numeroWA, texto) {
       urgencia: datos.urgencia,
     })
 
-    db.updateTrabajoTecnico(trabajo.id, elegido.id)
-    db.updateTrabajoEstado(trabajo.id, 'activo')
+    await db.updateTrabajoTecnico(trabajo.id, elegido.id)
+    await db.updateTrabajoEstado(trabajo.id, 'activo')
 
     await enviarMensajeWA(numero,
-      `¡Listo! Le avisé a *${elegido.nombre}* sobre tu solicitud 🙌\n\nTe confirmará en los próximos minutos. Puedes escribirme aquí.`)
-    db.upsertSesion(numero, 'chat_activo', datos, trabajo.id)
+      `¡Listo! Le avisé a *${elegido.nombre}* sobre tu solicitud 🙌\n\nTe confirmará en los próximos minutos.`)
+    await db.upsertSesion(numero, 'chat_activo', datos, trabajo.id)
     return
   }
 
   // ── CHAT ACTIVO ───────────────────────────────────────────────────────────
   if (sesion.estado === 'chat_activo') {
-    if (sesion.trabajo_id) db.createMensaje(sesion.trabajo_id, 'cliente', msg)
+    if (sesion.trabajo_id) await db.createMensaje(sesion.trabajo_id, 'cliente', msg)
     return
   }
 
@@ -209,40 +199,38 @@ export async function procesarMensaje(numeroWA, texto) {
         { id: '3', title: '⭐⭐⭐ Regular' },
       ]); return
     }
-    const trabajo = db.getTrabajo(sesion.trabajo_id)
+    const trabajo = await db.getTrabajo(sesion.trabajo_id)
     if (trabajo) {
-      db.createCalificacion(sesion.trabajo_id, trabajo.tecnico_id, puntaje)
-      const stats = db.getRatingStats(trabajo.tecnico_id)
-      db.updateTecnicoRating(trabajo.tecnico_id, stats.avg, stats.total)
-      db.updateTrabajoEstado(sesion.trabajo_id, 'completado')
+      await db.createCalificacion(sesion.trabajo_id, trabajo.tecnico_id, puntaje)
+      const stats = await db.getRatingStats(trabajo.tecnico_id)
+      await db.updateTecnicoRating(trabajo.tecnico_id, stats.avg, stats.total)
+      await db.updateTrabajoEstado(sesion.trabajo_id, 'completado')
     }
     await enviarMensajeWA(numero,
-      `¡Gracias por tu calificación ${'⭐'.repeat(puntaje)}!\n\nTu opinión mejora la calidad del servicio. Escríbenos cuando necesites otro técnico 🙌`)
-    db.upsertSesion(numero, 'inicio', {})
+      `¡Gracias por tu calificación ${'⭐'.repeat(puntaje)}!\n\nEscríbenos cuando necesites otro técnico 🙌`)
+    await db.upsertSesion(numero, 'inicio', {})
     return
   }
 
-  db.upsertSesion(numero, 'inicio', {})
+  await db.upsertSesion(numero, 'inicio', {})
   await enviarMensajeWA(numero, 'Hola 👋 Escríbeme para pedir un técnico.')
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 async function mostrarSlots(numero, datos, sesion) {
-  const slots = db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 5)
+  const slots = await db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 5)
   if (!slots.length) {
     await enviarMensajeWA(numero,
-      `No hay horarios disponibles en ${datos.comuna} para los próximos días 😕\n\nEscríbenos más adelante o elige otra urgencia.`)
-    db.upsertSesion(numero, 'inicio', {})
+      `No hay horarios disponibles en ${datos.comuna} para los próximos días 😕`)
+    await db.upsertSesion(numero, 'inicio', {})
     return
   }
   datos.slots = slots
   await enviarLista(numero,
     `Estos son los próximos horarios disponibles en ${datos.comuna}:`,
     'Ver horarios',
-    [{ rows: slots.map((s,i) => ({ id: String(i), title: s.label })) }]
+    [{ rows: slots.map((s, i) => ({ id: String(i), title: s.label })) }]
   )
-  db.upsertSesion(numero, 'esperando_slot', datos, sesion.trabajo_id)
+  await db.upsertSesion(numero, 'esperando_slot', datos, sesion.trabajo_id)
 }
 
 async function mostrarTecnicos(numero, datos, tecnicos, sesion) {
@@ -257,5 +245,5 @@ async function mostrarTecnicos(numero, datos, tecnicos, sesion) {
     [{ rows: lista }]
   )
   datos.tecnicos = tecnicos.map(t => ({ id: t.id, nombre: t.nombre }))
-  db.upsertSesion(numero, 'esperando_eleccion', datos, sesion.trabajo_id)
+  await db.upsertSesion(numero, 'esperando_eleccion', datos, sesion.trabajo_id)
 }
