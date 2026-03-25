@@ -26,6 +26,7 @@ export async function enviarMensajeWA(numero, mensaje) {
   try {
     const c = getClient()
     if (!c) return null
+    console.log('📤 Enviando WA a:', toNumber(numero), 'desde:', fromNumber())
     return await c.messages.create({
       from: fromNumber(),
       to: toNumber(numero),
@@ -64,8 +65,7 @@ export async function enviarLista(numero, cuerpo, boton, secciones) {
       contentSid: content.sid
     })
   } catch (err) {
-    console.error('Error lista WA:', err.message)
-    // Fallback a texto
+    console.error('❌ Error lista WA:', err.message, err.code)
     const items = secciones.flatMap(s => s.rows).map((r,i) => `*${i+1}* ${r.title}`).join('\n')
     return enviarMensajeWA(numero, `${cuerpo}\n\n${items}`)
   }
