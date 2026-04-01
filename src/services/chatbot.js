@@ -48,6 +48,13 @@ export async function procesarMensaje(numeroWA, texto) {
 
   const datos = JSON.parse(sesion.datos_temp || '{}')
 
+  // ── REINICIO MANUAL (cualquier estado) ────────────────────────────────────
+  const PALABRAS_REINICIO = ['reiniciar', 'reset', 'inicio', 'hola', 'menu', 'menú', 'empezar']
+  if (PALABRAS_REINICIO.includes(msg.toLowerCase())) {
+    await db.upsertSesion(numero, 'inicio', {})
+    sesion = { ...sesion, estado: 'inicio', datos_temp: '{}' }
+  }
+
   // ── INICIO ────────────────────────────────────────────────────────────────
   if (sesion.estado === 'inicio') {
     await enviarLista(numero,
