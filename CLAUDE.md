@@ -14,15 +14,16 @@ TecnoYa es una plataforma chilena que conecta clientes con técnicos de hogar (e
 - **GitHub PWA**: sholmgren96/fixchl-tecnico
 
 ## Variables de entorno en Railway
-- DATABASE_URL = postgresql://postgres.wjvdmnbbjsqgfgczlfvc:Chile-19567675@aws-1-sa-east-1.pooler.supabase.com:6543/postgres
-- JWT_SECRET = fixchl_secreto_2024_seguro
-- NODE_ENV = production
-- PORT = 3000
-- PUBLIC_URL = https://fixchl-backend-production-bda3.up.railway.app
-- PWA_URL = https://fixchl-tecnico.vercel.app
-- TWILIO_ACCOUNT_SID = AC5912f7ecc640451a248b0de9f69d74e1
-- TWILIO_AUTH_TOKEN = (configurado en Railway, no modificar)
-- TWILIO_WHATSAPP_NUMBER = +15559319840
+Configuradas directamente en Railway dashboard. No modificar sin coordinación.
+- DATABASE_URL — conexión a Supabase via pooler (aws-1-sa-east-1.pooler.supabase.com:6543)
+- JWT_SECRET — clave para firmar tokens JWT
+- NODE_ENV — production
+- PORT — 3000
+- PUBLIC_URL — https://fixchl-backend-production-bda3.up.railway.app
+- PWA_URL — https://fixchl-tecnico.vercel.app
+- TWILIO_ACCOUNT_SID — ver en console.twilio.com
+- TWILIO_AUTH_TOKEN — ver en console.twilio.com
+- TWILIO_WHATSAPP_NUMBER — +15559319840
 
 ## Estructura de archivos
 src/
