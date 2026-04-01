@@ -21,9 +21,9 @@ Configuradas directamente en Railway dashboard. No modificar sin coordinación.
 - PORT — 3000
 - PUBLIC_URL — https://fixchl-backend-production-bda3.up.railway.app
 - PWA_URL — https://fixchl-tecnico.vercel.app
-- TWILIO_ACCOUNT_SID — ver en console.twilio.com
-- TWILIO_AUTH_TOKEN — ver en console.twilio.com
-- TWILIO_WHATSAPP_NUMBER — +15559319840
+- TWILIO_ACCOUNT_SID — ver en Twilio dashboard
+- TWILIO_AUTH_TOKEN — ver en Twilio dashboard
+- TWILIO_WHATSAPP_NUMBER — ver en Twilio dashboard
 
 ## Estructura de archivos
 src/
