@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { PORT, PWA_URL, NODE_ENV } from './config.js'
-import { initDb } from './db/database.js'
+import { initDb, query } from './db/database.js'
 
 import { checkJobsTimeout } from './services/chatbot.js'
 import authRoutes          from './routes/auth.js'
@@ -25,6 +25,15 @@ app.use('/api/disponibilidad', disponibilidadRoutes)
 app.use('/webhook',            webhookRoutes)
 
 app.get('/health', (_, res) => res.json({ status: 'ok', env: NODE_ENV }))
+
+// Endpoint admin: resetear sesión de un número WhatsApp
+app.delete('/admin/sesion/:numero', async (req, res) => {
+  try {
+    const numero = decodeURIComponent(req.params.numero)
+    await query('DELETE FROM sesiones_bot WHERE cliente_wa=$1', [numero])
+    res.json({ ok: true, mensaje: `Sesión de ${numero} eliminada` })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 app.use((req, res) => res.status(404).json({ error: `Ruta ${req.path} no encontrada` }))
 
 initDb()
