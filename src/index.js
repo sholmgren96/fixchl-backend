@@ -3,6 +3,7 @@ import cors from 'cors'
 import { PORT, PWA_URL, NODE_ENV } from './config.js'
 import { initDb } from './db/database.js'
 
+import { checkJobsTimeout } from './services/chatbot.js'
 import authRoutes          from './routes/auth.js'
 import tecnicoRoutes       from './routes/tecnico.js'
 import trabajosRoutes      from './routes/trabajos.js'
@@ -27,6 +28,13 @@ app.get('/health', (_, res) => res.json({ status: 'ok', env: NODE_ENV }))
 app.use((req, res) => res.status(404).json({ error: `Ruta ${req.path} no encontrada` }))
 
 initDb()
+
+// Verificar cada 10 minutos trabajos sin técnico después de 2h
+setInterval(async () => {
+  try { await checkJobsTimeout() }
+  catch (e) { console.error('Error en timeout check:', e) }
+}, 10 * 60 * 1000)
+
 app.listen(process.env.PORT || PORT, () => {
   console.log(`\n🚀 FixChl Backend corriendo en http://localhost:${process.env.PORT || PORT}`)
   console.log(`   Entorno: ${NODE_ENV}`)

@@ -5,6 +5,37 @@ const CATEGORIAS = ['Electricista', 'Gasfiter', 'Servicio de aseo', 'Pintor', 'M
 const URGENCIAS  = ['Hoy mismo', 'Esta semana', 'Elegir fecha']
 const COMUNAS    = ['Las Condes', 'Vitacura', 'Lo Barnechea', 'Chicureo']
 
+const BLOQUES_HORARIOS = [
+  { hora: '09:00', label: '09:00 – 11:00' },
+  { hora: '11:00', label: '11:00 – 13:00' },
+  { hora: '14:00', label: '14:00 – 16:00' },
+  { hora: '16:00', label: '16:00 – 18:00' },
+]
+
+function getProximosDias(n = 7) {
+  const dias = []
+  const nombDias  = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+  const nombMeses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+  const hoy = new Date()
+  for (let i = 1; i <= n; i++) {
+    const d = new Date(hoy)
+    d.setDate(hoy.getDate() + i)
+    const fechaStr = d.toISOString().split('T')[0]
+    dias.push({
+      fecha: fechaStr,
+      label: `${nombDias[d.getDay()]} ${d.getDate()} ${nombMeses[d.getMonth()]}`
+    })
+  }
+  return dias
+}
+
+function formatFechaCorta(fechaStr) {
+  const d = new Date(fechaStr + 'T12:00:00')
+  const dias  = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+  return `${dias[d.getDay()]} ${d.getDate()} ${meses[d.getMonth()]}`
+}
+
 export async function procesarMensaje(numeroWA, texto) {
   const numero = numeroWA.replace('whatsapp:', '')
   const msg    = texto.trim()
@@ -85,7 +116,15 @@ export async function procesarMensaje(numeroWA, texto) {
     datos.urgencia = urgencia
 
     if (urgencia === 'Elegir fecha') {
-      return await mostrarSlots(numero, datos, sesion)
+      datos.fechas_propuestas = []
+      const dias = getProximosDias(7)
+      await enviarLista(numero,
+        '📅 ¿Qué día te acomoda? Puedes agregar hasta 3 opciones para encontrar técnico más rápido.',
+        'Ver días',
+        [{ rows: dias.map((d, i) => ({ id: String(i), title: d.label })) }]
+      )
+      await db.upsertSesion(numero, 'esperando_fecha_cliente', { ...datos, _dias: dias })
+      return
     }
 
     const tecnicos = await db.buscarTecnicos(datos.categoria, datos.comuna)
@@ -111,6 +150,109 @@ export async function procesarMensaje(numeroWA, texto) {
     }
 
     await mostrarTecnicos(numero, datos, tecnicos, sesion)
+    return
+  }
+
+  // ── ESPERANDO FECHA CLIENTE ───────────────────────────────────────────────
+  if (sesion.estado === 'esperando_fecha_cliente') {
+    const dias = datos._dias || getProximosDias(7)
+    const idx = parseInt(msg)
+    const diaElegido = (!isNaN(idx) && idx >= 0 && idx < dias.length)
+      ? dias[idx]
+      : dias.find(d => d.label.toLowerCase().includes(msg.toLowerCase()))
+
+    if (!diaElegido) {
+      await enviarLista(numero, '¿Qué día te acomoda?', 'Ver días',
+        [{ rows: dias.map((d, i) => ({ id: String(i), title: d.label })) }])
+      return
+    }
+
+    datos.fecha_temp       = diaElegido.fecha
+    datos.fecha_temp_label = diaElegido.label
+
+    await enviarLista(numero, `¿A qué hora el *${diaElegido.label}*?`, 'Ver horarios',
+      [{ rows: BLOQUES_HORARIOS.map((b, i) => ({ id: String(i), title: b.label })) }]
+    )
+    await db.upsertSesion(numero, 'esperando_hora_cliente', datos)
+    return
+  }
+
+  // ── ESPERANDO HORA CLIENTE ────────────────────────────────────────────────
+  if (sesion.estado === 'esperando_hora_cliente') {
+    const idx = parseInt(msg)
+    const bloqueElegido = (!isNaN(idx) && idx >= 0 && idx < BLOQUES_HORARIOS.length)
+      ? BLOQUES_HORARIOS[idx]
+      : BLOQUES_HORARIOS.find(b => b.label.toLowerCase().includes(msg.toLowerCase()))
+
+    if (!bloqueElegido) {
+      await enviarLista(numero, `¿A qué hora el *${datos.fecha_temp_label}*?`, 'Ver horarios',
+        [{ rows: BLOQUES_HORARIOS.map((b, i) => ({ id: String(i), title: b.label })) }])
+      return
+    }
+
+    if (!datos.fechas_propuestas) datos.fechas_propuestas = []
+    datos.fechas_propuestas.push({
+      fecha: datos.fecha_temp,
+      hora: bloqueElegido.hora,
+      label: `${datos.fecha_temp_label} · ${bloqueElegido.label}`
+    })
+    delete datos.fecha_temp
+    delete datos.fecha_temp_label
+    delete datos._dias
+
+    const lista = datos.fechas_propuestas.map(f => `• ${f.label}`).join('\n')
+
+    if (datos.fechas_propuestas.length < 3) {
+      await enviarBotones(numero,
+        `✅ Agregado:\n${lista}\n\n¿Tienes otra fecha disponible?\n_Dar más opciones ayuda a encontrar técnico más rápido_ 😊`,
+        [{ id: 'mas_fechas', title: '📅 Agregar otra fecha' }, { id: 'listo_fechas', title: '✅ Listo, buscar técnico' }]
+      )
+      await db.upsertSesion(numero, 'esperando_mas_fechas', datos)
+    } else {
+      await procesarFechasListas(numero, datos)
+    }
+    return
+  }
+
+  // ── ESPERANDO MÁS FECHAS ─────────────────────────────────────────────────
+  if (sesion.estado === 'esperando_mas_fechas') {
+    const quiereMas = msg === 'mas_fechas'
+      || msg.toLowerCase().includes('agregar')
+      || msg.toLowerCase().includes('otra')
+      || msg.toLowerCase().includes('sí')
+      || msg.toLowerCase().includes('si')
+
+    if (quiereMas) {
+      const dias = getProximosDias(7)
+      await enviarLista(numero, '¿Qué otro día te acomoda?', 'Ver días',
+        [{ rows: dias.map((d, i) => ({ id: String(i), title: d.label })) }])
+      await db.upsertSesion(numero, 'esperando_fecha_cliente', { ...datos, _dias: dias })
+    } else {
+      await procesarFechasListas(numero, datos)
+    }
+    return
+  }
+
+  // ── ESPERANDO ACCIÓN SIN TÉCNICO ─────────────────────────────────────────
+  if (sesion.estado === 'esperando_accion_sin_tecnico') {
+    const quiereMasFechas = msg === 'mas_fechas'
+      || msg.toLowerCase().includes('agregar')
+      || msg.toLowerCase().includes('fecha')
+
+    if (quiereMasFechas) {
+      const dias = getProximosDias(7)
+      await enviarLista(numero, '¿Qué día te acomoda?', 'Ver días',
+        [{ rows: dias.map((d, i) => ({ id: String(i), title: d.label })) }])
+      await db.upsertSesion(numero, 'esperando_fecha_cliente', { ...datos, _dias: dias })
+    } else {
+      // Solicitar otro servicio → reiniciar
+      await enviarLista(numero,
+        '¡Hola! 👋 Soy el asistente de *TecnoYa*.\n\n¿Qué servicio necesitas?',
+        'Ver servicios',
+        [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
+      )
+      await db.upsertSesion(numero, 'esperando_categoria', {})
+    }
     return
   }
 
@@ -216,6 +358,64 @@ export async function procesarMensaje(numeroWA, texto) {
   await enviarMensajeWA(numero, 'Hola 👋 Escríbeme para pedir un técnico.')
 }
 
+// ── PROCESAR FECHAS Y CREAR TRABAJO ──────────────────────────────────────────
+async function procesarFechasListas(numero, datos) {
+  const tecnicos = await db.buscarTecnicosPorFechas(datos.categoria, datos.comuna, datos.fechas_propuestas)
+  const lista = datos.fechas_propuestas.map(f => `• ${f.label}`).join('\n')
+
+  if (!tecnicos.length) {
+    await enviarBotones(numero,
+      `No encontramos técnicos disponibles para tus fechas 😕\n\n${lista}\n\n¿Qué deseas hacer?`,
+      [{ id: 'mas_fechas', title: '📅 Agregar más fechas' }, { id: 'otro_servicio', title: '🔄 Solicitar otro servicio' }]
+    )
+    await db.upsertSesion(numero, 'esperando_accion_sin_tecnico', datos)
+    return
+  }
+
+  const trabajo = await db.createTrabajo({
+    cliente_nombre: 'Cliente',
+    cliente_wa: numero,
+    categoria: datos.categoria,
+    descripcion: datos.descripcion,
+    comuna: datos.comuna,
+    urgencia: 'Elegir fecha',
+  })
+
+  await db.createFechasPropuestas(trabajo.id, datos.fechas_propuestas)
+
+  await enviarMensajeWA(numero,
+    `✅ ¡Solicitud enviada!\n\nTus fechas propuestas:\n${lista}\n\nUn técnico revisará tu solicitud y confirmará una fecha.\nTe avisaré cuando ocurra 🙌`)
+
+  await db.upsertSesion(numero, 'chat_activo', datos, trabajo.id)
+}
+
+// ── TIMEOUT 2H: verificar trabajos sin técnico ────────────────────────────────
+export async function checkJobsTimeout() {
+  const jobs = await db.getTrabajosPendientesNotificacion()
+  for (const job of jobs) {
+    const fechas = await db.getFechasPropuestas(job.id)
+    let msg = `⏰ Aún no encontramos técnico para tu solicitud de *${job.categoria}* en ${job.comuna}.`
+    if (fechas.length) {
+      const fechasStr = fechas.map(f => `• ${f.label}`).join('\n')
+      msg += `\n\nTus fechas propuestas:\n${fechasStr}`
+    }
+    msg += '\n\n¿Qué deseas hacer?'
+
+    await enviarBotones(job.cliente_wa, msg,
+      [{ id: 'mas_fechas', title: '📅 Agregar más fechas' }, { id: 'otro_servicio', title: '🔄 Solicitar otro servicio' }]
+    )
+
+    await db.marcarNotificado(job.id)
+
+    const sesion = await db.getSesion(job.cliente_wa)
+    if (sesion) {
+      const datos = JSON.parse(sesion.datos_temp || '{}')
+      await db.upsertSesion(job.cliente_wa, 'esperando_accion_sin_tecnico', datos, job.id)
+    }
+  }
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
 async function mostrarSlots(numero, datos, sesion) {
   const slots = await db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 5)
   if (!slots.length) {

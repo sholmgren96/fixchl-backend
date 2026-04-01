@@ -128,18 +128,21 @@ export const db = {
     return r.rows
   },
 
-  async aceptarTrabajo(id, tecnicoId) {
+  async aceptarTrabajo(id, tecnicoId, fecha = null, hora = null) {
+    if (fecha && hora) {
+      await query('UPDATE trabajos SET fecha_agendada=$1, hora_agendada=$2 WHERE id=$3', [fecha, hora, id])
+    }
     const r = await query(
       `UPDATE trabajos SET estado='activo', tecnico_id=$1, accepted_at=NOW() WHERE id=$2 AND estado='buscando' RETURNING *`,
       [tecnicoId, id]
     )
-    if (!r.rows[0]) return false
+    if (!r.rows[0]) return null
     const t = r.rows[0]
     if (t.fecha_agendada && t.hora_agendada) {
       const duracion = DURACION[t.categoria] || 2
       await this.bloquearHorario(tecnicoId, t.fecha_agendada, t.hora_agendada, duracion, id)
     }
-    return true
+    return t
   },
 
   async completarTrabajo(id, tecnicoId) {
@@ -256,6 +259,73 @@ export const db = {
       [tecnicoId]
     )
     return r.rows
+  },
+
+  // ── FECHAS PROPUESTAS ─────────────────────────────────────────────────────
+  async createFechasPropuestas(trabajoId, fechas) {
+    for (const f of fechas) {
+      await query(
+        'INSERT INTO trabajo_fechas_propuestas (trabajo_id, fecha, hora) VALUES ($1, $2, $3)',
+        [trabajoId, f.fecha, f.hora]
+      )
+    }
+  },
+
+  async getFechasPropuestas(trabajoId) {
+    const r = await query(
+      'SELECT fecha, hora FROM trabajo_fechas_propuestas WHERE trabajo_id=$1 ORDER BY fecha, hora',
+      [trabajoId]
+    )
+    return r.rows.map(row => ({
+      fecha: typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0],
+      hora: row.hora,
+      label: `${formatFecha(typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0])} ${row.hora}`
+    }))
+  },
+
+  async buscarTecnicosPorFechas(categoria, comuna, fechas) {
+    const duracion = DURACION[categoria] || 2
+    const tecnicosMap = new Map()
+    for (const fp of fechas) {
+      const hora = fp.hora
+      const [h] = hora.split(':').map(Number)
+      const horaFin = `${String(h + duracion).padStart(2, '0')}:00`
+      const r = await query(
+        `SELECT DISTINCT t.id, t.nombre, t.rating, t.total_jobs
+         FROM tecnicos t
+         JOIN tecnico_categorias tc ON tc.tecnico_id=t.id AND tc.categoria=$1
+         JOIN tecnico_comunas cm ON cm.tecnico_id=t.id AND cm.comuna=$2
+         JOIN disponibilidad d ON d.tecnico_id=t.id
+           AND d.fecha=$3
+           AND d.hora_inicio::time <= $4::time
+           AND d.hora_fin::time >= $5::time
+         WHERE NOT EXISTS (
+           SELECT 1 FROM bloques_ocupados bo
+           WHERE bo.tecnico_id=t.id AND bo.fecha=$3
+           AND bo.hora_inicio::time < $5::time
+           AND bo.hora_fin::time > $4::time
+         )`,
+        [categoria, comuna, fp.fecha, hora, horaFin]
+      )
+      for (const row of r.rows) {
+        if (!tecnicosMap.has(row.id)) tecnicosMap.set(row.id, row)
+      }
+    }
+    return Array.from(tecnicosMap.values())
+  },
+
+  async getTrabajosPendientesNotificacion() {
+    const r = await query(
+      `SELECT * FROM trabajos
+       WHERE estado='buscando'
+       AND sin_tecnico_notificado=false
+       AND created_at < NOW() - INTERVAL '2 hours'`
+    )
+    return r.rows
+  },
+
+  async marcarNotificado(id) {
+    await query('UPDATE trabajos SET sin_tecnico_notificado=true WHERE id=$1', [id])
   },
 
   async bloquearHorario(tecnicoId, fecha, horaInicio, duracionHoras, trabajoId) {
@@ -398,6 +468,14 @@ export async function initDb() {
       hora_fin TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS trabajo_fechas_propuestas (
+      id SERIAL PRIMARY KEY,
+      trabajo_id INTEGER REFERENCES trabajos(id) ON DELETE CASCADE,
+      fecha DATE NOT NULL,
+      hora TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS sin_tecnico_notificado BOOLEAN DEFAULT false;
   `)
   console.log('✅ Base de datos PostgreSQL lista')
 }
