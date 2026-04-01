@@ -28,6 +28,23 @@ const DURACION = {
   'Servicio de aseo': 3, 'Maestro general': 3, 'Otro': 2,
 }
 
+function horasARangos(horas) {
+  if (!horas.length) return []
+  const sorted = [...horas].map(h => parseInt(h)).sort((a, b) => a - b)
+  const rangos = []
+  let inicio = sorted[0]
+  let prev   = sorted[0]
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === prev + 1) { prev = sorted[i] }
+    else {
+      rangos.push({ hora_inicio: `${String(inicio).padStart(2,'0')}:00`, hora_fin: `${String(prev + 1).padStart(2,'0')}:00` })
+      inicio = sorted[i]; prev = sorted[i]
+    }
+  }
+  rangos.push({ hora_inicio: `${String(inicio).padStart(2,'0')}:00`, hora_fin: `${String(prev + 1).padStart(2,'0')}:00` })
+  return rangos
+}
+
 function formatFecha(fecha) {
   const d = new Date(fecha + 'T12:00:00')
   const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
@@ -251,6 +268,33 @@ export const db = {
         [tecnicoId, b.fecha, b.hora_inicio, b.hora_fin]
       )
     }
+  },
+
+  async setDisponibilidadFecha(tecnicoId, fecha, horas) {
+    await query('DELETE FROM disponibilidad WHERE tecnico_id=$1 AND fecha=$2', [tecnicoId, fecha])
+    if (!horas.length) return
+    const rangos = horasARangos(horas)
+    for (const r of rangos) {
+      await query(
+        'INSERT INTO disponibilidad (tecnico_id, fecha, hora_inicio, hora_fin) VALUES ($1, $2, $3, $4)',
+        [tecnicoId, fecha, r.hora_inicio, r.hora_fin]
+      )
+    }
+  },
+
+  async getBloquesOcupados(tecnicoId) {
+    const r = await query(
+      `SELECT b.fecha, b.hora_inicio, b.hora_fin, t.categoria, t.cliente_nombre
+       FROM bloques_ocupados b
+       LEFT JOIN trabajos t ON t.id = b.trabajo_id
+       WHERE b.tecnico_id=$1 AND b.fecha >= CURRENT_DATE
+       ORDER BY b.fecha, b.hora_inicio`,
+      [tecnicoId]
+    )
+    return r.rows.map(row => ({
+      ...row,
+      fecha: typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0]
+    }))
   },
 
   async getDisponibilidadTecnico(tecnicoId) {
