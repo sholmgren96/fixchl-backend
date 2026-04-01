@@ -141,8 +141,11 @@ export async function procesarMensaje(numeroWA, texto) {
         await db.upsertSesion(numero, 'esperando_slot', datos)
       } else {
         await enviarBotones(numero,
-          `No hay técnicos disponibles en ${datos.comuna} ahora mismo 😕\n\n¿Quieres que te avisemos cuando haya uno?`,
-          [{ id: 'si_avisar', title: 'Sí, avísame' }, { id: 'no', title: 'No, gracias' }]
+          `No hay técnicos disponibles en ${datos.comuna} ahora mismo 😕\n\n¿Qué deseas hacer?`,
+          [
+            { id: 'si_avisar',    title: '🔔 Avísame cuando haya' },
+            { id: 'otro_servicio', title: '🔄 Pedir otro servicio' },
+          ]
         )
         await db.upsertSesion(numero, 'esperando_aviso', datos)
       }
@@ -290,13 +293,23 @@ export async function procesarMensaje(numeroWA, texto) {
 
   // ── ESPERANDO AVISO ───────────────────────────────────────────────────────
   if (sesion.estado === 'esperando_aviso') {
-    if (msg === 'si_avisar' || msg.toLowerCase().includes('sí') || msg.toLowerCase().includes('si')) {
+    const quiereAviso = msg === 'si_avisar'
+      || msg.toLowerCase().includes('avis')
+      || msg.toLowerCase().includes('sí')
+      || (msg.toLowerCase() === 'si')
+
+    if (quiereAviso) {
       await enviarMensajeWA(numero,
-        `Perfecto, te avisaremos cuando haya un técnico de ${datos.categoria} disponible en ${datos.comuna} 🙌`)
-    } else {
-      await enviarMensajeWA(numero, 'Entendido. Escríbenos cuando lo necesites 👋')
+        `Perfecto, te avisaremos cuando haya un técnico de *${datos.categoria}* disponible en ${datos.comuna} 🔔`)
     }
-    await db.upsertSesion(numero, 'inicio', {})
+
+    // En ambos casos, ofrecer inmediatamente solicitar otro servicio
+    await enviarLista(numero,
+      '¿Necesitas algo más? Puedo ayudarte con otro servicio 👇',
+      'Ver servicios',
+      [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
+    )
+    await db.upsertSesion(numero, 'esperando_categoria', {})
     return
   }
 
