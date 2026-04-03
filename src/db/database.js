@@ -54,6 +54,46 @@ function formatFecha(fecha) {
 
 export const db = {
 
+  // ── OTP ────────────────────────────────────────────────────────────────────
+  async crearOtp(telefono, codigo) {
+    const expires = new Date(Date.now() + 10 * 60 * 1000) // 10 minutos
+    await query('DELETE FROM otp_verificaciones WHERE telefono=$1', [telefono])
+    const r = await query(
+      'INSERT INTO otp_verificaciones (telefono, codigo, expires_at) VALUES ($1,$2,$3) RETURNING id',
+      [telefono, codigo, expires]
+    )
+    return r.rows[0].id
+  },
+
+  async otpEnviadoReciente(telefono) {
+    const r = await query(
+      "SELECT id FROM otp_verificaciones WHERE telefono=$1 AND created_at > NOW() - INTERVAL '60 seconds'",
+      [telefono]
+    )
+    return r.rows.length > 0
+  },
+
+  async verificarOtp(telefono, codigo) {
+    const r = await query(
+      "SELECT id FROM otp_verificaciones WHERE telefono=$1 AND codigo=$2 AND expires_at > NOW() AND verificado=false",
+      [telefono, codigo]
+    )
+    if (!r.rows[0]) return false
+    await query(
+      'UPDATE otp_verificaciones SET verificado=true, verificado_at=NOW() WHERE id=$1',
+      [r.rows[0].id]
+    )
+    return true
+  },
+
+  async telefonoVerificadoReciente(telefono) {
+    const r = await query(
+      "SELECT id FROM otp_verificaciones WHERE telefono=$1 AND verificado=true AND verificado_at > NOW() - INTERVAL '15 minutes'",
+      [telefono]
+    )
+    return r.rows.length > 0
+  },
+
   // ── ADMINS ─────────────────────────────────────────────────────────────────
   async getAdminByEmail(email) {
     const r = await query('SELECT * FROM admins WHERE email=$1', [email])
@@ -476,6 +516,18 @@ export const db = {
 }
 
 export async function initDb() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS otp_verificaciones (
+      id SERIAL PRIMARY KEY,
+      telefono TEXT NOT NULL,
+      codigo TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      verificado BOOLEAN DEFAULT false,
+      verificado_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `)
+
   // Migraciones — agregar columnas nuevas si no existen
   await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'activo'`)
   await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS cedula_foto TEXT`)
