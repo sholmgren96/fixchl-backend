@@ -302,7 +302,10 @@ export const db = {
       'SELECT * FROM disponibilidad WHERE tecnico_id=$1 AND fecha>=CURRENT_DATE ORDER BY fecha, hora_inicio',
       [tecnicoId]
     )
-    return r.rows
+    return r.rows.map(row => ({
+      ...row,
+      fecha: typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0]
+    }))
   },
 
   // ── FECHAS PROPUESTAS ─────────────────────────────────────────────────────
