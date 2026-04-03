@@ -11,7 +11,7 @@ router.get('/perfil', async (req, res) => {
     if (!tecnico) return res.status(404).json({ error: 'No encontrado' })
     const comunas   = await db.getComunas(tecnico.id)
     const categorias = await db.getCategorias(tecnico.id)
-    const { password, ...rest } = tecnico
+    const { password, cedula_foto, ...rest } = tecnico
     res.json({ ...rest, comunas, categorias })
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })

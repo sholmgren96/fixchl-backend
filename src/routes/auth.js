@@ -24,12 +24,15 @@ function validarRut(rut) {
 
 router.post('/registro', async (req, res) => {
   try {
-    const { nombre, rut, telefono, password, categoria, categorias, comunas } = req.body
+    const { nombre, rut, telefono, password, categoria, categorias, comunas, cedula_foto } = req.body
     if (!nombre || !rut || !telefono || !password)
       return res.status(400).json({ error: 'Faltan campos obligatorios' })
 
     if (!validarRut(rut))
       return res.status(400).json({ error: 'RUT inválido' })
+
+    if (!cedula_foto)
+      return res.status(400).json({ error: 'Debes subir una foto de tu cédula de identidad' })
 
     const todasCategorias = categorias?.length ? categorias : (categoria ? [categoria] : [])
     if (!todasCategorias.length)
@@ -41,7 +44,7 @@ router.post('/registro', async (req, res) => {
     if (existe) return res.status(409).json({ error: 'Ya existe un técnico con ese RUT o teléfono' })
 
     const hash = await bcrypt.hash(password, 10)
-    const tecnico = await db.createTecnico({ nombre, rut, telefono, password: hash })
+    const tecnico = await db.createTecnico({ nombre, rut, telefono, password: hash, cedula_foto })
 
     for (const c of todasCategorias) { try { await db.addCategoria(tecnico.id, c) } catch {} }
     for (const c of comunas) { try { await db.addComuna(tecnico.id, c) } catch {} }

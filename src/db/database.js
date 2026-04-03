@@ -54,6 +54,28 @@ function formatFecha(fecha) {
 
 export const db = {
 
+  // ── ADMINS ─────────────────────────────────────────────────────────────────
+  async getAdminByEmail(email) {
+    const r = await query('SELECT * FROM admins WHERE email=$1', [email])
+    return r.rows[0] || null
+  },
+
+  async getTodosLosTecnicos() {
+    const r = await query(
+      `SELECT id, nombre, rut, telefono, estado, disponible, rating, total_jobs, total_reviews, razon_rechazo, created_at
+       FROM tecnicos ORDER BY created_at DESC`
+    )
+    return r.rows
+  },
+
+  async suspenderTecnico(id) {
+    await query("UPDATE tecnicos SET estado='suspendido' WHERE id=$1", [id])
+  },
+
+  async reactivarTecnico(id) {
+    await query("UPDATE tecnicos SET estado='activo' WHERE id=$1", [id])
+  },
+
   // ── TÉCNICOS ───────────────────────────────────────────────────────────────
   async getTecnico(id) {
     const r = await query('SELECT * FROM tecnicos WHERE id=$1', [id])
@@ -70,12 +92,33 @@ export const db = {
     return r.rows[0] || null
   },
 
-  async createTecnico({ nombre, rut, telefono, password }) {
+  async createTecnico({ nombre, rut, telefono, password, cedula_foto }) {
     const r = await query(
-      'INSERT INTO tecnicos (nombre,rut,telefono,password) VALUES ($1,$2,$3,$4) RETURNING *',
-      [nombre, rut, telefono, password]
+      'INSERT INTO tecnicos (nombre,rut,telefono,password,cedula_foto,estado) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+      [nombre, rut, telefono, password, cedula_foto, 'pendiente']
     )
     return r.rows[0]
+  },
+
+  async getPendientes() {
+    const r = await query(
+      `SELECT id, nombre, rut, telefono, estado, razon_rechazo, created_at
+       FROM tecnicos WHERE estado='pendiente' ORDER BY created_at ASC`
+    )
+    return r.rows
+  },
+
+  async getCedulaFoto(id) {
+    const r = await query('SELECT cedula_foto FROM tecnicos WHERE id=$1', [id])
+    return r.rows[0]?.cedula_foto || null
+  },
+
+  async aprobarTecnico(id) {
+    await query("UPDATE tecnicos SET estado='activo', razon_rechazo=NULL WHERE id=$1", [id])
+  },
+
+  async rechazarTecnico(id, razon) {
+    await query("UPDATE tecnicos SET estado='rechazado', razon_rechazo=$2 WHERE id=$1", [id, razon || null])
   },
 
   async updateTecnicoDisponible(id, disponible) {
@@ -253,7 +296,7 @@ export const db = {
       `SELECT t.id, t.nombre, t.rating, t.total_jobs FROM tecnicos t
        JOIN tecnico_categorias tc ON tc.tecnico_id=t.id AND tc.categoria=$1
        JOIN tecnico_comunas cm ON cm.tecnico_id=t.id AND cm.comuna=$2
-       WHERE t.disponible=true ORDER BY t.rating DESC LIMIT 3`,
+       WHERE t.disponible=true AND t.estado='activo' ORDER BY t.rating DESC LIMIT 3`,
       [categoria, comuna]
     )
     return r.rows
@@ -346,7 +389,8 @@ export const db = {
            AND d.fecha=$3
            AND d.hora_inicio::time <= $4::time
            AND d.hora_fin::time >= $5::time
-         WHERE NOT EXISTS (
+         WHERE t.estado='activo'
+         AND NOT EXISTS (
            SELECT 1 FROM bloques_ocupados bo
            WHERE bo.tecnico_id=t.id AND bo.fecha=$3
            AND bo.hora_inicio::time < $5::time
@@ -392,6 +436,7 @@ export const db = {
        JOIN tecnico_categorias tc ON tc.tecnico_id=t.id AND tc.categoria=$1
        JOIN tecnico_comunas cm ON cm.tecnico_id=t.id AND cm.comuna=$2
        JOIN disponibilidad d ON d.tecnico_id=t.id AND d.fecha>=CURRENT_DATE
+       WHERE t.estado='activo'
        ORDER BY d.fecha, d.hora_inicio`,
       [categoria, comuna]
     )
@@ -431,6 +476,29 @@ export const db = {
 }
 
 export async function initDb() {
+  // Migraciones — agregar columnas nuevas si no existen
+  await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'activo'`)
+  await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS cedula_foto TEXT`)
+  await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS razon_rechazo TEXT`)
+  await query(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `)
+  // Seed del primer admin desde variables de entorno
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    const bcrypt = await import('bcryptjs')
+    const hash = await bcrypt.default.hash(process.env.ADMIN_PASSWORD, 10)
+    await query(
+      'INSERT INTO admins (nombre, email, password) VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING',
+      [process.env.ADMIN_NOMBRE || 'Admin', process.env.ADMIN_EMAIL, hash]
+    )
+  }
+
   await query(`
     CREATE TABLE IF NOT EXISTS tecnicos (
       id SERIAL PRIMARY KEY,

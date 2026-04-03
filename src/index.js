@@ -10,6 +10,7 @@ import trabajosRoutes      from './routes/trabajos.js'
 import chatRoutes          from './routes/chat.js'
 import webhookRoutes       from './routes/webhook.js'
 import disponibilidadRoutes from './routes/disponibilidad.js'
+import adminRoutes          from './routes/admin.js'
 
 const app = express()
 
@@ -22,6 +23,7 @@ app.use('/api/tecnico',        tecnicoRoutes)
 app.use('/api/trabajos',       trabajosRoutes)
 app.use('/api/chat',           chatRoutes)
 app.use('/api/disponibilidad', disponibilidadRoutes)
+app.use('/api/admin',          adminRoutes)
 app.use('/webhook',            webhookRoutes)
 
 app.get('/health', (_, res) => res.json({ status: 'ok', env: NODE_ENV }))
