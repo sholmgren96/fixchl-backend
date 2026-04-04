@@ -1,7 +1,7 @@
-# TecnoYa — Backend
+# TecnicosYa — Backend
 
 ## Descripción del proyecto
-TecnoYa es una plataforma chilena que conecta clientes con técnicos de hogar (electricista, gasfiter, pintor, servicio de aseo, maestro general) en Santiago. El cliente interactúa via WhatsApp con un chatbot automatizado. El técnico gestiona sus trabajos desde una PWA (app web progresiva).
+TecnicosYa es una plataforma chilena que conecta clientes con técnicos de hogar (electricista, gasfiter, pintor, servicio de aseo, maestro general) en Santiago. El cliente interactúa via WhatsApp con un chatbot automatizado. El técnico gestiona sus trabajos desde una PWA (app web progresiva).
 
 ## Infraestructura
 - **Backend**: Node.js + Express, desplegado en Railway
@@ -9,7 +9,7 @@ TecnoYa es una plataforma chilena que conecta clientes con técnicos de hogar (e
 - **Base de datos**: PostgreSQL en Supabase (proyecto ID: wjvdmnbbjsqgfgczlfvc)
 - **Conexión DB**: Usar SIEMPRE el pooler URL, NUNCA la conexión directa (Railway no tiene IPv6)
 - **PWA técnico**: React en Vercel — https://fixchl-tecnico.vercel.app
-- **WhatsApp**: Twilio, número +15559319840 (TecnoYa), sandbox +14155238886
+- **WhatsApp**: Twilio, número +15559319840 (TecnicosYa), sandbox +14155238886
 - **GitHub backend**: sholmgren96/fixchl-backend
 - **GitHub PWA**: sholmgren96/fixchl-tecnico
 
@@ -100,5 +100,5 @@ Gasfiter: 2h, Electricista: 2h, Pintor: 4h, Servicio de aseo: 3h, Maestro genera
 ## Contexto de negocio
 - Fase inicial sin monetización — primero construir base de técnicos y calificaciones
 - Mercado objetivo: comunas oriente de Santiago (Las Condes, Vitacura, Lo Barnechea, Chicureo)
-- Nombre de la empresa: TecnoYa
+- Nombre de la empresa: TecnicosYa
 - El nombre antiguo FixChl aparece en algunos archivos — se está migrando gradualmente

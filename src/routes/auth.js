@@ -40,7 +40,7 @@ router.post('/otp/enviar', async (req, res) => {
 
     await enviarMensajeWA(
       telefono,
-      `Tu código de verificación TecnoYa es: *${codigo}*\n\nVálido por 10 minutos. No lo compartas con nadie.`
+      `Tu código de verificación TecnicosYa es: *${codigo}*\n\nVálido por 10 minutos. No lo compartas con nadie.`
     )
 
     res.json({ ok: true })

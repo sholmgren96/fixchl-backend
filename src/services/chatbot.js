@@ -58,7 +58,7 @@ export async function procesarMensaje(numeroWA, texto) {
   // ── INICIO ────────────────────────────────────────────────────────────────
   if (sesion.estado === 'inicio') {
     await enviarLista(numero,
-      '¡Hola! 👋 Soy el asistente de *TecnoYa*.\n\nConecto personas con técnicos de calidad en Santiago. ¿Qué servicio necesitas?',
+      '¡Hola! 👋 Soy el asistente de *TecnicosYa*.\n\nConecto personas con técnicos de calidad en Santiago. ¿Qué servicio necesitas?',
       'Ver servicios',
       [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
     )
@@ -257,7 +257,7 @@ export async function procesarMensaje(numeroWA, texto) {
     } else {
       // Solicitar otro servicio → reiniciar
       await enviarLista(numero,
-        '¡Hola! 👋 Soy el asistente de *TecnoYa*.\n\n¿Qué servicio necesitas?',
+        '¡Hola! 👋 Soy el asistente de *TecnicosYa*.\n\n¿Qué servicio necesitas?',
         'Ver servicios',
         [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
       )

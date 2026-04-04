@@ -1,7 +1,7 @@
 {
   "name": "fixchl-backend",
   "version": "0.1.0",
-  "description": "Backend para TecnoYa",
+  "description": "Backend para TecnicosYa",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
