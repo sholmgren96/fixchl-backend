@@ -54,6 +54,139 @@ function formatFecha(fecha) {
 
 export const db = {
 
+  // ── ESTADÍSTICAS ADMIN ────────────────────────────────────────────────────
+  async getStatsAdmin() {
+    const [
+      totales, funnel, porSemana, porCategoria,
+      porComuna, calDist, topTecnicos, tecnicosPorEstado
+    ] = await Promise.all([
+      // KPIs generales
+      query(`
+        SELECT
+          COUNT(*)                                                        AS total,
+          COUNT(*) FILTER (WHERE estado='completado')                     AS completados,
+          COUNT(*) FILTER (WHERE estado='activo')                         AS en_progreso,
+          COUNT(*) FILTER (WHERE estado='buscando' AND created_at < NOW() - INTERVAL '2 hours') AS sin_tecnico,
+          ROUND(AVG(EXTRACT(EPOCH FROM (accepted_at - created_at))/60)::numeric, 1) AS tiempo_resp_min
+        FROM trabajos
+      `),
+      // Embudo de conversión
+      query(`
+        SELECT
+          COUNT(*)                                             AS creados,
+          COUNT(*) FILTER (WHERE accepted_at IS NOT NULL)     AS aceptados,
+          COUNT(*) FILTER (WHERE estado='completado')         AS completados,
+          (SELECT COUNT(*) FROM calificaciones)               AS calificados
+        FROM trabajos
+      `),
+      // Trabajos por semana (últimas 10 semanas)
+      query(`
+        SELECT TO_CHAR(DATE_TRUNC('week', created_at), 'DD/MM') AS semana, COUNT(*) AS cantidad
+        FROM trabajos
+        WHERE created_at >= NOW() - INTERVAL '10 weeks'
+        GROUP BY DATE_TRUNC('week', created_at)
+        ORDER BY DATE_TRUNC('week', created_at)
+      `),
+      // Por categoría
+      query(`
+        SELECT categoria, COUNT(*) AS cantidad
+        FROM trabajos GROUP BY categoria ORDER BY cantidad DESC
+      `),
+      // Por comuna
+      query(`
+        SELECT comuna, COUNT(*) AS cantidad
+        FROM trabajos GROUP BY comuna ORDER BY cantidad DESC
+      `),
+      // Distribución calificaciones
+      query(`
+        SELECT puntaje, COUNT(*) AS cantidad
+        FROM calificaciones GROUP BY puntaje ORDER BY puntaje
+      `),
+      // Top 5 técnicos
+      query(`
+        SELECT t.nombre, t.rating, t.total_jobs,
+               COUNT(tr.id) FILTER (WHERE tr.estado='completado') AS completados
+        FROM tecnicos t
+        LEFT JOIN trabajos tr ON tr.tecnico_id = t.id
+        WHERE t.estado = 'activo'
+        GROUP BY t.id ORDER BY completados DESC LIMIT 5
+      `),
+      // Técnicos por estado
+      query(`
+        SELECT estado, COUNT(*) AS cantidad FROM tecnicos GROUP BY estado
+      `)
+    ])
+
+    const kpis = totales.rows[0]
+    const f    = funnel.rows[0]
+    const ratingRow = await query('SELECT ROUND(AVG(puntaje)::numeric, 1) AS avg FROM calificaciones')
+
+    return {
+      kpis: {
+        total_trabajos:    parseInt(kpis.total),
+        completados:       parseInt(kpis.completados),
+        en_progreso:       parseInt(kpis.en_progreso),
+        sin_tecnico:       parseInt(kpis.sin_tecnico),
+        tiempo_resp_min:   parseFloat(kpis.tiempo_resp_min) || 0,
+        rating_promedio:   parseFloat(ratingRow.rows[0].avg) || 0,
+        tasa_conversion:   f.creados > 0 ? Math.round((f.completados / f.creados) * 100) : 0,
+      },
+      funnel: [
+        { etapa: 'Creados',      cantidad: parseInt(f.creados) },
+        { etapa: 'Aceptados',    cantidad: parseInt(f.aceptados) },
+        { etapa: 'Completados',  cantidad: parseInt(f.completados) },
+        { etapa: 'Calificados',  cantidad: parseInt(f.calificados) },
+      ],
+      por_semana:    porSemana.rows.map(r => ({ semana: r.semana, cantidad: parseInt(r.cantidad) })),
+      por_categoria: porCategoria.rows.map(r => ({ nombre: r.categoria, cantidad: parseInt(r.cantidad) })),
+      por_comuna:    porComuna.rows.map(r => ({ nombre: r.comuna, cantidad: parseInt(r.cantidad) })),
+      calificaciones_dist: calDist.rows.map(r => ({ puntaje: r.puntaje, cantidad: parseInt(r.cantidad) })),
+      top_tecnicos:  topTecnicos.rows.map(r => ({ ...r, completados: parseInt(r.completados) })),
+      tecnicos_por_estado: tecnicosPorEstado.rows,
+    }
+  },
+
+  async getTrabajosAdmin({ estado, categoria, desde, hasta, limit = 50, offset = 0 } = {}) {
+    const conds = ['1=1']
+    const vals  = []
+    let i = 1
+    if (estado)   { conds.push(`tr.estado=$${i++}`);                       vals.push(estado) }
+    if (categoria){ conds.push(`tr.categoria=$${i++}`);                    vals.push(categoria) }
+    if (desde)    { conds.push(`tr.created_at >= $${i++}`);                vals.push(desde) }
+    if (hasta)    { conds.push(`tr.created_at <= $${i++}::date + 1`);     vals.push(hasta) }
+    vals.push(limit, offset)
+
+    const r = await query(`
+      SELECT tr.*, tc.nombre AS tecnico_nombre,
+             (SELECT puntaje FROM calificaciones WHERE trabajo_id=tr.id LIMIT 1) AS calificacion
+      FROM trabajos tr
+      LEFT JOIN tecnicos tc ON tc.id = tr.tecnico_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY tr.created_at DESC
+      LIMIT $${i++} OFFSET $${i++}
+    `, vals)
+
+    const total = await query(`
+      SELECT COUNT(*) FROM trabajos tr WHERE ${conds.join(' AND ')}
+    `, vals.slice(0, -2))
+
+    return { trabajos: r.rows, total: parseInt(total.rows[0].count) }
+  },
+
+  async getTrabajoConMensajes(id) {
+    const [tj, msgs, cal] = await Promise.all([
+      query(`
+        SELECT tr.*, tc.nombre AS tecnico_nombre, tc.telefono AS tecnico_telefono
+        FROM trabajos tr LEFT JOIN tecnicos tc ON tc.id=tr.tecnico_id
+        WHERE tr.id=$1
+      `, [id]),
+      query('SELECT * FROM mensajes WHERE trabajo_id=$1 ORDER BY created_at ASC', [id]),
+      query('SELECT * FROM calificaciones WHERE trabajo_id=$1 LIMIT 1', [id]),
+    ])
+    if (!tj.rows[0]) return null
+    return { ...tj.rows[0], mensajes: msgs.rows, calificacion: cal.rows[0] || null }
+  },
+
   // ── OTP ────────────────────────────────────────────────────────────────────
   async crearOtp(telefono, codigo) {
     const expires = new Date(Date.now() + 10 * 60 * 1000) // 10 minutos

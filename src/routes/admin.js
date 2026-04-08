@@ -83,4 +83,33 @@ router.post('/tecnicos/:id/reactivar', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
+// Dashboard — estadísticas generales
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await db.getStatsAdmin()
+    res.json(stats)
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
+// Lista de trabajos con filtros
+router.get('/trabajos', async (req, res) => {
+  try {
+    const { estado, categoria, desde, hasta, limit, offset } = req.query
+    const data = await db.getTrabajosAdmin({ estado, categoria, desde, hasta,
+      limit: limit ? parseInt(limit) : 50,
+      offset: offset ? parseInt(offset) : 0,
+    })
+    res.json(data)
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
+// Detalle de trabajo con mensajes
+router.get('/trabajos/:id', async (req, res) => {
+  try {
+    const data = await db.getTrabajoConMensajes(req.params.id)
+    if (!data) return res.status(404).json({ error: 'No encontrado' })
+    res.json(data)
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
 export default router
