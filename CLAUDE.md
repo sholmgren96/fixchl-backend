@@ -8,7 +8,7 @@ TecnicosYa es una plataforma chilena que conecta clientes con técnicos de hogar
 - **URL producción**: https://fixchl-backend-production-bda3.up.railway.app
 - **Base de datos**: PostgreSQL en Supabase (proyecto ID: wjvdmnbbjsqgfgczlfvc)
 - **Conexión DB**: Usar SIEMPRE el pooler URL, NUNCA la conexión directa (Railway no tiene IPv6)
-- **PWA técnico**: React en Vercel — https://fixchl-tecnico.vercel.app
+- **PWA técnico**: React en Vercel — https://tecnicosya.vercel.app
 - **WhatsApp**: Twilio, número +15559319840 (TecnicosYa), sandbox +14155238886
 - **GitHub backend**: sholmgren96/fixchl-backend
 - **GitHub PWA**: sholmgren96/fixchl-tecnico
@@ -20,7 +20,7 @@ Configuradas directamente en Railway dashboard. No modificar sin coordinación.
 - NODE_ENV — production
 - PORT — 3000
 - PUBLIC_URL — https://fixchl-backend-production-bda3.up.railway.app
-- PWA_URL — https://fixchl-tecnico.vercel.app
+- PWA_URL — https://tecnicosya.vercel.app
 - TWILIO_ACCOUNT_SID — ver en Twilio dashboard
 - TWILIO_AUTH_TOKEN — ver en Twilio dashboard
 - TWILIO_WHATSAPP_NUMBER — ver en Twilio dashboard

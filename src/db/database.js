@@ -86,6 +86,10 @@ export const db = {
     return true
   },
 
+  async actualizarPassword(id, hash) {
+    await query('UPDATE tecnicos SET password=$2 WHERE id=$1', [id, hash])
+  },
+
   async telefonoVerificadoReciente(telefono) {
     const r = await query(
       "SELECT id FROM otp_verificaciones WHERE telefono=$1 AND verificado=true AND verificado_at > NOW() - INTERVAL '15 minutes'",

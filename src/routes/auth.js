@@ -97,6 +97,25 @@ router.post('/registro', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
+// ── Recuperar contraseña ──────────────────────────────────────────────────────
+router.post('/recuperar', async (req, res) => {
+  try {
+    const { telefono, nueva_password } = req.body
+    if (!telefono || !nueva_password) return res.status(400).json({ error: 'Faltan campos' })
+    if (nueva_password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+
+    const verificado = await db.telefonoVerificadoReciente(telefono)
+    if (!verificado) return res.status(400).json({ error: 'Debes verificar tu teléfono primero' })
+
+    const tecnico = await db.getTecnicoByTelefono(telefono)
+    if (!tecnico) return res.status(404).json({ error: 'No existe una cuenta con ese teléfono' })
+
+    const hash = await bcrypt.hash(nueva_password, 10)
+    await db.actualizarPassword(tecnico.id, hash)
+    res.json({ ok: true })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
 // ── Login ─────────────────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
