@@ -606,6 +606,45 @@ export const db = {
     )
   },
 
+  // ── REPORTES ───────────────────────────────────────────────────────────────
+  async createReporte(clienteWa, tipo, descripcion, trabajoId = null) {
+    const r = await query(
+      'INSERT INTO reportes (cliente_wa, tipo, descripcion, trabajo_id) VALUES ($1,$2,$3,$4) RETURNING *',
+      [clienteWa, tipo, descripcion, trabajoId]
+    )
+    return r.rows[0]
+  },
+
+  async getReportesAdmin({ estado, limit = 50, offset = 0 } = {}) {
+    const conds = ['1=1']
+    const vals  = []
+    let i = 1
+    if (estado) { conds.push(`r.estado=$${i++}`); vals.push(estado) }
+    vals.push(limit, offset)
+    const r = await query(`
+      SELECT r.*, t.categoria, t.comuna
+      FROM reportes r
+      LEFT JOIN trabajos t ON t.id = r.trabajo_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY r.created_at DESC
+      LIMIT $${i++} OFFSET $${i++}
+    `, vals)
+    const total = await query(
+      `SELECT COUNT(*) FROM reportes r WHERE ${conds.join(' AND ')}`,
+      vals.slice(0, -2)
+    )
+    return { reportes: r.rows, total: parseInt(total.rows[0].count) }
+  },
+
+  async updateReporteEstado(id, estado) {
+    await query('UPDATE reportes SET estado=$1 WHERE id=$2', [estado, id])
+  },
+
+  async countReportesPendientes() {
+    const r = await query("SELECT COUNT(*) FROM reportes WHERE estado='pendiente'")
+    return parseInt(r.rows[0].count)
+  },
+
   async buscarSlotsDisponibles(categoria, comuna, limite=5) {
     const r = await query(
       `SELECT t.id, t.nombre, t.rating, d.fecha, d.hora_inicio, d.hora_fin
@@ -780,6 +819,15 @@ export async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS sin_tecnico_notificado BOOLEAN DEFAULT false;
+    CREATE TABLE IF NOT EXISTS reportes (
+      id SERIAL PRIMARY KEY,
+      cliente_wa TEXT NOT NULL,
+      tipo TEXT NOT NULL,
+      descripcion TEXT NOT NULL,
+      trabajo_id INTEGER REFERENCES trabajos(id),
+      estado TEXT NOT NULL DEFAULT 'pendiente',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `)
   console.log('✅ Base de datos PostgreSQL lista')
 }

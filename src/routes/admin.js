@@ -112,4 +112,28 @@ router.get('/trabajos/:id', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
+// Lista de reportes con filtro opcional por estado
+router.get('/reportes', async (req, res) => {
+  try {
+    const { estado, limit, offset } = req.query
+    const data = await db.getReportesAdmin({
+      estado,
+      limit:  limit  ? parseInt(limit)  : 50,
+      offset: offset ? parseInt(offset) : 0,
+    })
+    res.json(data)
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
+// Actualizar estado de un reporte
+router.patch('/reportes/:id/estado', async (req, res) => {
+  try {
+    const { estado } = req.body
+    if (!['pendiente', 'revisado', 'resuelto'].includes(estado))
+      return res.status(400).json({ error: 'Estado inválido' })
+    await db.updateReporteEstado(req.params.id, estado)
+    res.json({ ok: true })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
 export default router

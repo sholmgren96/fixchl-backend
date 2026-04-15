@@ -5,6 +5,22 @@ const CATEGORIAS = ['Electricista', 'Gasfiter', 'Servicio de aseo', 'Pintor', 'M
 const URGENCIAS  = ['Hoy mismo', 'Esta semana', 'Elegir fecha']
 const COMUNAS    = ['Las Condes', 'Vitacura', 'Lo Barnechea', 'Chicureo']
 
+const PALABRAS_AYUDA = ['ayuda', 'help', 'soporte', '?', 'ayudame', 'ayúdame', 'problema']
+
+const TIPOS_REPORTE = [
+  { id: 'no_llego',         title: 'El técnico no llegó' },
+  { id: 'mal_servicio',     title: 'Problema con el trabajo' },
+  { id: 'cancelar_trabajo', title: 'Cancelar un trabajo activo' },
+  { id: 'otro',             title: 'Otra consulta o reclamo' },
+]
+
+const FAQ = {
+  como_funciona: `*¿Cómo funciona TecnicosYa?* 🔧\n\nEscríbenos por WhatsApp, cuéntanos qué servicio necesitas y en qué comuna estás. Te mostramos técnicos disponibles, eliges uno y te contactará para coordinar la visita.\n\nAl terminar el trabajo puedes calificarlo ⭐`,
+  comunas:       `*¿En qué comunas trabajan?* 📍\n\nActualmente operamos en:\n• Las Condes\n• Vitacura\n• Lo Barnechea\n• Chicureo\n\nPróximamente más comunas de Santiago 🙌`,
+  precios:       `*¿Cuánto cobran los técnicos?* 💰\n\nCada técnico fija sus propios precios según el tipo de trabajo. TecnicosYa no cobra comisión al cliente.\n\nPuedes consultar el precio directamente con el técnico antes de confirmar la visita 👍`,
+  cancelar:      `*¿Cómo cancelo una solicitud?* ❌\n\nSi aún no hay técnico asignado, escribe *reiniciar* para volver al inicio.\n\nSi ya tienes un técnico asignado, selecciona la opción *"Tengo un problema"* en este menú de ayuda para reportar la situación y nuestro equipo te contactará.`,
+}
+
 const BLOQUES_HORARIOS = [
   { hora: '09:00', label: '09:00 – 11:00' },
   { hora: '11:00', label: '11:00 – 13:00' },
@@ -48,6 +64,15 @@ export async function procesarMensaje(numeroWA, texto) {
 
   const datos = JSON.parse(sesion.datos_temp || '{}')
 
+  // ── AYUDA (cualquier estado excepto los propios de ayuda) ─────────────────
+  const estadosAyuda = ['esperando_ayuda', 'esperando_tipo_reporte', 'esperando_desc_reporte']
+  if (PALABRAS_AYUDA.includes(msg.toLowerCase()) && !estadosAyuda.includes(sesion.estado)) {
+    datos._estado_anterior = sesion.estado
+    await mostrarMenuAyuda(numero)
+    await db.upsertSesion(numero, 'esperando_ayuda', datos)
+    return
+  }
+
   // ── REINICIO MANUAL (cualquier estado) ────────────────────────────────────
   const PALABRAS_REINICIO = ['reiniciar', 'reset', 'inicio', 'hola', 'menu', 'menú', 'empezar']
   if (PALABRAS_REINICIO.includes(msg.toLowerCase())) {
@@ -60,7 +85,12 @@ export async function procesarMensaje(numeroWA, texto) {
     await enviarLista(numero,
       '¡Hola! 👋 Soy el asistente de *TecnicosYa*.\n\nConecto personas con técnicos de calidad en Santiago. ¿Qué servicio necesitas?',
       'Ver servicios',
-      [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }]
+      [{
+        rows: [
+          ...CATEGORIAS.map(c => ({ id: c, title: c })),
+          { id: 'ayuda', title: '❓ Ayuda / Preguntas frecuentes' },
+        ]
+      }]
     )
     await db.upsertSesion(numero, 'esperando_categoria', datos)
     return
@@ -68,12 +98,23 @@ export async function procesarMensaje(numeroWA, texto) {
 
   // ── ESPERANDO CATEGORÍA ───────────────────────────────────────────────────
   if (sesion.estado === 'esperando_categoria') {
+    if (msg.toLowerCase() === 'ayuda') {
+      datos._estado_anterior = 'esperando_categoria'
+      await mostrarMenuAyuda(numero)
+      await db.upsertSesion(numero, 'esperando_ayuda', datos)
+      return
+    }
     const categoria = CATEGORIAS.find(c =>
       c.toLowerCase() === msg.toLowerCase() || c.toLowerCase().includes(msg.toLowerCase())
     )
     if (!categoria) {
       await enviarLista(numero, 'Por favor selecciona una opción:', 'Ver servicios',
-        [{ rows: CATEGORIAS.map(c => ({ id: c, title: c })) }])
+        [{
+          rows: [
+            ...CATEGORIAS.map(c => ({ id: c, title: c })),
+            { id: 'ayuda', title: '❓ Ayuda / Preguntas frecuentes' },
+          ]
+        }])
       return
     }
     datos.categoria = categoria
@@ -351,6 +392,101 @@ export async function procesarMensaje(numeroWA, texto) {
     return
   }
 
+  // ── MENÚ DE AYUDA ────────────────────────────────────────────────────────
+  if (sesion.estado === 'esperando_ayuda') {
+    const opcion = msg.toLowerCase()
+
+    if (opcion === 'como_funciona' || opcion.includes('funciona')) {
+      await enviarMensajeWA(numero, FAQ.como_funciona)
+      await mostrarMenuAyuda(numero)
+      return
+    }
+    if (opcion === 'comunas' || opcion.includes('comuna')) {
+      await enviarMensajeWA(numero, FAQ.comunas)
+      await mostrarMenuAyuda(numero)
+      return
+    }
+    if (opcion === 'precios' || opcion.includes('precio') || opcion.includes('cobran') || opcion.includes('costo')) {
+      await enviarMensajeWA(numero, FAQ.precios)
+      await mostrarMenuAyuda(numero)
+      return
+    }
+    if (opcion === 'cancelar' || opcion.includes('cancel')) {
+      await enviarMensajeWA(numero, FAQ.cancelar)
+      await mostrarMenuAyuda(numero)
+      return
+    }
+    if (opcion === 'problema' || opcion.includes('problem') || opcion.includes('reportar') || opcion.includes('reclam')) {
+      await enviarLista(numero,
+        '😔 Lamentamos que tengas un problema. ¿Qué tipo de situación quieres reportar?',
+        'Ver opciones',
+        [{ rows: TIPOS_REPORTE }]
+      )
+      await db.upsertSesion(numero, 'esperando_tipo_reporte', datos)
+      return
+    }
+    if (opcion === 'volver' || opcion.includes('volver') || opcion.includes('menu') || opcion.includes('menú')) {
+      const estadoAnterior = datos._estado_anterior
+      delete datos._estado_anterior
+      if (estadoAnterior && estadoAnterior !== 'inicio' && estadoAnterior !== 'esperando_categoria') {
+        await enviarMensajeWA(numero, 'Volviendo a donde estabas... Escribe tu respuesta para continuar 👍')
+        await db.upsertSesion(numero, estadoAnterior, datos)
+      } else {
+        await db.upsertSesion(numero, 'inicio', {})
+        sesion = { ...sesion, estado: 'inicio', datos_temp: '{}' }
+        // Caemos al handler de inicio abajo — no retornamos
+        await enviarLista(numero,
+          '¡Hola! 👋 Soy el asistente de *TecnicosYa*.\n\n¿Qué servicio necesitas?',
+          'Ver servicios',
+          [{
+            rows: [
+              ...CATEGORIAS.map(c => ({ id: c, title: c })),
+              { id: 'ayuda', title: '❓ Ayuda / Preguntas frecuentes' },
+            ]
+          }]
+        )
+        await db.upsertSesion(numero, 'esperando_categoria', {})
+      }
+      return
+    }
+
+    // Respuesta no reconocida → mostrar menú de nuevo
+    await mostrarMenuAyuda(numero)
+    return
+  }
+
+  // ── ESPERANDO TIPO DE REPORTE ─────────────────────────────────────────────
+  if (sesion.estado === 'esperando_tipo_reporte') {
+    const tipo = TIPOS_REPORTE.find(t =>
+      t.id === msg.toLowerCase() || t.title.toLowerCase().includes(msg.toLowerCase())
+    )
+    if (!tipo) {
+      await enviarLista(numero, '¿Qué tipo de situación quieres reportar?', 'Ver opciones',
+        [{ rows: TIPOS_REPORTE }])
+      return
+    }
+    datos.tipo_reporte = tipo.id
+    await enviarMensajeWA(numero,
+      `Entendido: *${tipo.title}*\n\nPor favor descríbenos brevemente la situación para que nuestro equipo pueda ayudarte 📝`)
+    await db.upsertSesion(numero, 'esperando_desc_reporte', datos)
+    return
+  }
+
+  // ── ESPERANDO DESCRIPCIÓN DE REPORTE ─────────────────────────────────────
+  if (sesion.estado === 'esperando_desc_reporte') {
+    if (msg.length < 5) {
+      await enviarMensajeWA(numero, 'Por favor describe un poco más la situación 🙏')
+      return
+    }
+    await db.createReporte(numero, datos.tipo_reporte || 'otro', msg, sesion.trabajo_id || null)
+    await enviarMensajeWA(numero,
+      `✅ Tu reporte fue registrado. Nuestro equipo lo revisará y te contactará si es necesario.\n\n¿Hay algo más en lo que pueda ayudarte?`)
+    delete datos.tipo_reporte
+    await mostrarMenuAyuda(numero)
+    await db.upsertSesion(numero, 'esperando_ayuda', datos)
+    return
+  }
+
   // ── CALIFICACIÓN ──────────────────────────────────────────────────────────
   if (sesion.estado === 'esperando_calificacion') {
     const puntaje = parseInt(msg)
@@ -436,6 +572,23 @@ export async function checkJobsTimeout() {
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
+async function mostrarMenuAyuda(numero) {
+  await enviarLista(numero,
+    '❓ *Centro de ayuda TecnicosYa*\n\nSelecciona una opción o escribe *ayuda* en cualquier momento para volver aquí:',
+    'Ver opciones',
+    [{
+      rows: [
+        { id: 'como_funciona', title: '📋 ¿Cómo funciona?' },
+        { id: 'comunas',       title: '📍 ¿En qué comunas trabajan?' },
+        { id: 'precios',       title: '💰 ¿Cuánto cobran los técnicos?' },
+        { id: 'cancelar',      title: '❌ Cancelar una solicitud' },
+        { id: 'problema',      title: '⚠️ Tengo un problema' },
+        { id: 'volver',        title: '🔙 Volver al menú principal' },
+      ]
+    }]
+  )
+}
+
 async function mostrarSlots(numero, datos, sesion) {
   const slots = await db.buscarSlotsDisponibles(datos.categoria, datos.comuna, 5)
   if (!slots.length) {
