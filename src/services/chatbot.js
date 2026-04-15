@@ -65,7 +65,8 @@ export async function procesarMensaje(numeroWA, texto) {
   const datos = JSON.parse(sesion.datos_temp || '{}')
 
   // ── AYUDA (cualquier estado excepto los propios de ayuda) ─────────────────
-  const estadosAyuda = ['esperando_ayuda', 'esperando_tipo_reporte', 'esperando_desc_reporte']
+  const estadosAyuda = ['esperando_ayuda', 'esperando_tipo_reporte', 'esperando_desc_reporte',
+    'esperando_confirmacion_pago', 'esperando_decision_post_pago', 'esperando_slot_reagendamiento']
   if (PALABRAS_AYUDA.includes(msg.toLowerCase()) && !estadosAyuda.includes(sesion.estado)) {
     datos._estado_anterior = sesion.estado
     await mostrarMenuAyuda(numero)
@@ -484,6 +485,113 @@ export async function procesarMensaje(numeroWA, texto) {
     delete datos.tipo_reporte
     await mostrarMenuAyuda(numero)
     await db.upsertSesion(numero, 'esperando_ayuda', datos)
+    return
+  }
+
+  // ── ESPERANDO CONFIRMACIÓN DE PAGO ───────────────────────────────────────
+  if (sesion.estado === 'esperando_confirmacion_pago') {
+    await enviarBotones(numero,
+      `¿El trabajo quedó completo o aún falta algo por terminar?`,
+      [
+        { id: 'evaluar',   title: '⭐ Evaluar el trabajo' },
+        { id: 'pendiente', title: '🔧 Falta trabajo por terminar' },
+      ]
+    )
+    await db.upsertSesion(numero, 'esperando_decision_post_pago', datos, sesion.trabajo_id)
+    return
+  }
+
+  // ── ESPERANDO DECISIÓN POST PAGO ─────────────────────────────────────────
+  if (sesion.estado === 'esperando_decision_post_pago') {
+    const evaluar   = msg === 'evaluar'   || msg.toLowerCase().includes('evaluar') || msg.toLowerCase().includes('calific')
+    const pendiente = msg === 'pendiente' || msg.toLowerCase().includes('falta')   || msg.toLowerCase().includes('pendiente')
+
+    if (!evaluar && !pendiente) {
+      await enviarBotones(numero,
+        `¿El trabajo quedó completo o aún falta algo por terminar?`,
+        [
+          { id: 'evaluar',   title: '⭐ Evaluar el trabajo' },
+          { id: 'pendiente', title: '🔧 Falta trabajo por terminar' },
+        ]
+      )
+      return
+    }
+
+    if (evaluar) {
+      await db.updateTrabajoEstado(sesion.trabajo_id, 'esperando_calificacion')
+      await enviarBotones(numero, '¿Cómo calificarías el trabajo?', [
+        { id: '5', title: '⭐⭐⭐⭐⭐ Excelente' },
+        { id: '4', title: '⭐⭐⭐⭐ Bueno' },
+        { id: '3', title: '⭐⭐⭐ Regular' },
+      ])
+      await db.upsertSesion(numero, 'esperando_calificacion', datos, sesion.trabajo_id)
+      return
+    }
+
+    // Pendiente: buscar slots del mismo técnico
+    const trabajo = await db.getTrabajo(sesion.trabajo_id)
+    if (!trabajo) {
+      await enviarMensajeWA(numero, 'No encontramos el trabajo. Escribe *hola* para reiniciar.')
+      await db.upsertSesion(numero, 'inicio', {})
+      return
+    }
+
+    // Marcar el trabajo original como completado
+    await db.updateTrabajoEstado(sesion.trabajo_id, 'completado')
+
+    const slots = await db.getSlotsParaTecnico(trabajo.tecnico_id, trabajo.categoria, 5)
+    if (!slots.length) {
+      await enviarMensajeWA(numero,
+        `Entendido 🔧 El técnico no tiene horarios disponibles en este momento.\n\nTe avisaremos cuando tenga disponibilidad para coordinar la visita pendiente.`)
+      await db.upsertSesion(numero, 'inicio', {})
+      return
+    }
+
+    datos.slots_reagendamiento       = slots
+    datos.tecnico_reagendamiento_id  = trabajo.tecnico_id
+    datos.trabajo_padre_id           = sesion.trabajo_id
+    datos.categoria_reagendamiento   = trabajo.categoria
+    datos.descripcion_reagendamiento = trabajo.descripcion
+    datos.comuna_reagendamiento      = trabajo.comuna
+
+    await enviarLista(numero,
+      `Perfecto 🔧 Elige un horario disponible para que el técnico vuelva a terminar el trabajo:`,
+      'Ver horarios',
+      [{ rows: slots.map((s, i) => ({ id: String(i), title: s.label })) }]
+    )
+    await db.upsertSesion(numero, 'esperando_slot_reagendamiento', datos)
+    return
+  }
+
+  // ── ESPERANDO SLOT DE REAGENDAMIENTO ─────────────────────────────────────
+  if (sesion.estado === 'esperando_slot_reagendamiento') {
+    const slots = datos.slots_reagendamiento || []
+    const idx   = parseInt(msg)
+    const slot  = (!isNaN(idx) && idx >= 0 && idx < slots.length)
+      ? slots[idx]
+      : slots.find(s => s.label.toLowerCase().includes(msg.toLowerCase()))
+
+    if (!slot) {
+      await enviarLista(numero, 'Por favor selecciona uno de los horarios disponibles:', 'Ver horarios',
+        [{ rows: slots.map((s, i) => ({ id: String(i), title: s.label })) }])
+      return
+    }
+
+    const nuevoTrabajo = await db.crearTrabajoReagendamiento({
+      clienteWa:      numero,
+      categoria:      datos.categoria_reagendamiento,
+      descripcion:    datos.descripcion_reagendamiento || 'Trabajo pendiente',
+      comuna:         datos.comuna_reagendamiento,
+      urgencia:       'Trabajo pendiente',
+      fechaAgendada:  slot.fecha,
+      horaAgendada:   slot.hora_inicio,
+      tecnicoId:      datos.tecnico_reagendamiento_id,
+      trabajoPadreId: datos.trabajo_padre_id,
+    })
+
+    await enviarMensajeWA(numero,
+      `✅ Solicitud enviada para el *${slot.label}*.\n\nEl técnico confirmará la fecha. Te avisaremos cuando lo haga 🙌`)
+    await db.upsertSesion(numero, 'chat_activo', {}, nuevoTrabajo.id)
     return
   }
 

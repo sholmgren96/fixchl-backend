@@ -653,6 +653,99 @@ export const db = {
     return parseInt(r.rows[0].count)
   },
 
+  // ── REAGENDAMIENTO ─────────────────────────────────────────────────────────
+  async getSlotsParaTecnico(tecnicoId, categoria, limite = 5) {
+    const duracion = DURACION[categoria] || 2
+    const r = await query(
+      `SELECT fecha, hora_inicio, hora_fin
+       FROM disponibilidad
+       WHERE tecnico_id=$1 AND fecha >= CURRENT_DATE
+       ORDER BY fecha, hora_inicio`,
+      [tecnicoId]
+    )
+    const slots = []
+    for (const row of r.rows) {
+      const bloques = await query(
+        'SELECT hora_inicio, hora_fin FROM bloques_ocupados WHERE tecnico_id=$1 AND fecha=$2',
+        [tecnicoId, row.fecha]
+      )
+      const [hIni] = row.hora_inicio.split(':').map(Number)
+      const [hFin] = row.hora_fin.split(':').map(Number)
+      for (let h = hIni; h <= hFin - duracion; h++) {
+        const horaSlot    = `${String(h).padStart(2,'0')}:00`
+        const horaSlotFin = `${String(h + duracion).padStart(2,'0')}:00`
+        const ocupado = bloques.rows.some(b => !(horaSlotFin <= b.hora_inicio || horaSlot >= b.hora_fin))
+        if (!ocupado) {
+          const fechaStr = typeof row.fecha === 'string' ? row.fecha : row.fecha.toISOString().split('T')[0]
+          slots.push({
+            fecha:      fechaStr,
+            hora_inicio: horaSlot,
+            hora_fin:    horaSlotFin,
+            label:      `${formatFecha(fechaStr)} ${horaSlot}`,
+          })
+        }
+      }
+      if (slots.length >= limite) break
+    }
+    return slots.slice(0, limite)
+  },
+
+  async crearTrabajoReagendamiento({ clienteWa, categoria, descripcion, comuna, urgencia, fechaAgendada, horaAgendada, tecnicoId, trabajoPadreId }) {
+    const r = await query(
+      `INSERT INTO trabajos
+         (cliente_nombre, cliente_wa, categoria, descripcion, comuna, urgencia,
+          fecha_agendada, hora_agendada, estado, tecnico_id, trabajo_padre_id)
+       VALUES ('Cliente',$1,$2,$3,$4,$5,$6,$7,'esperando_confirmacion_tecnico',$8,$9)
+       RETURNING *`,
+      [clienteWa, categoria, descripcion, comuna, urgencia, fechaAgendada, horaAgendada, tecnicoId, trabajoPadreId]
+    )
+    return r.rows[0]
+  },
+
+  async getTrabajosReagendamiento(tecnicoId) {
+    const r = await query(
+      `SELECT tr.*, tp.categoria AS padre_categoria, tp.cliente_wa AS padre_cliente_wa
+       FROM trabajos tr
+       LEFT JOIN trabajos tp ON tp.id = tr.trabajo_padre_id
+       WHERE tr.tecnico_id=$1 AND tr.estado='esperando_confirmacion_tecnico'
+       ORDER BY tr.created_at DESC`,
+      [tecnicoId]
+    )
+    return r.rows.map(row => ({
+      ...row,
+      fecha_agendada: row.fecha_agendada
+        ? (typeof row.fecha_agendada === 'string' ? row.fecha_agendada : row.fecha_agendada.toISOString().split('T')[0])
+        : null,
+    }))
+  },
+
+  async confirmarReagendamiento(trabajoId, tecnicoId) {
+    const r = await query(
+      `UPDATE trabajos SET estado='activo', accepted_at=NOW()
+       WHERE id=$1 AND tecnico_id=$2 AND estado='esperando_confirmacion_tecnico'
+       RETURNING *`,
+      [trabajoId, tecnicoId]
+    )
+    if (!r.rows[0]) return null
+    const t = r.rows[0]
+    if (t.fecha_agendada && t.hora_agendada) {
+      const fechaStr = typeof t.fecha_agendada === 'string' ? t.fecha_agendada : t.fecha_agendada.toISOString().split('T')[0]
+      const duracion = DURACION[t.categoria] || 2
+      await this.bloquearHorario(tecnicoId, fechaStr, t.hora_agendada, duracion, trabajoId)
+    }
+    return t
+  },
+
+  async rechazarReagendamiento(trabajoId, tecnicoId, razon = null) {
+    const r = await query(
+      `UPDATE trabajos SET estado='esperando_slot_cliente', razon_rechazo_reagendamiento=$3
+       WHERE id=$1 AND tecnico_id=$2 AND estado='esperando_confirmacion_tecnico'
+       RETURNING *`,
+      [trabajoId, tecnicoId, razon]
+    )
+    return r.rows[0] || null
+  },
+
   async buscarSlotsDisponibles(categoria, comuna, limite=5) {
     const r = await query(
       `SELECT t.id, t.nombre, t.rating, d.fecha, d.hora_inicio, d.hora_fin
@@ -827,6 +920,8 @@ export async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS sin_tecnico_notificado BOOLEAN DEFAULT false;
+    ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS trabajo_padre_id INTEGER REFERENCES trabajos(id);
+    ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS razon_rechazo_reagendamiento TEXT;
     CREATE TABLE IF NOT EXISTS reportes (
       id SERIAL PRIMARY KEY,
       cliente_wa TEXT,
