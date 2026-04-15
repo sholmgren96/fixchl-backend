@@ -59,4 +59,14 @@ router.get('/rendimiento', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
+router.post('/reporte', async (req, res) => {
+  try {
+    const { tipo, descripcion, trabajo_id } = req.body
+    if (!tipo || !descripcion) return res.status(400).json({ error: 'tipo y descripcion requeridos' })
+    if (descripcion.length < 5) return res.status(400).json({ error: 'Descripción muy corta' })
+    await db.createReporteTecnico(req.tecnico.id, tipo, descripcion, trabajo_id || null)
+    res.json({ ok: true })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
+})
+
 export default router

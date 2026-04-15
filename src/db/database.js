@@ -609,8 +609,16 @@ export const db = {
   // ── REPORTES ───────────────────────────────────────────────────────────────
   async createReporte(clienteWa, tipo, descripcion, trabajoId = null) {
     const r = await query(
-      'INSERT INTO reportes (cliente_wa, tipo, descripcion, trabajo_id) VALUES ($1,$2,$3,$4) RETURNING *',
-      [clienteWa, tipo, descripcion, trabajoId]
+      'INSERT INTO reportes (cliente_wa, tipo, descripcion, trabajo_id, origen) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [clienteWa, tipo, descripcion, trabajoId, 'cliente']
+    )
+    return r.rows[0]
+  },
+
+  async createReporteTecnico(tecnicoId, tipo, descripcion, trabajoId = null) {
+    const r = await query(
+      'INSERT INTO reportes (tecnico_id, tipo, descripcion, trabajo_id, origen) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [tecnicoId, tipo, descripcion, trabajoId, 'tecnico']
     )
     return r.rows[0]
   },
@@ -821,13 +829,18 @@ export async function initDb() {
     ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS sin_tecnico_notificado BOOLEAN DEFAULT false;
     CREATE TABLE IF NOT EXISTS reportes (
       id SERIAL PRIMARY KEY,
-      cliente_wa TEXT NOT NULL,
+      cliente_wa TEXT,
+      tecnico_id INTEGER REFERENCES tecnicos(id),
+      origen TEXT NOT NULL DEFAULT 'cliente',
       tipo TEXT NOT NULL,
       descripcion TEXT NOT NULL,
       trabajo_id INTEGER REFERENCES trabajos(id),
       estado TEXT NOT NULL DEFAULT 'pendiente',
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE reportes ADD COLUMN IF NOT EXISTS tecnico_id INTEGER REFERENCES tecnicos(id);
+    ALTER TABLE reportes ADD COLUMN IF NOT EXISTS origen TEXT NOT NULL DEFAULT 'cliente';
+    ALTER TABLE reportes ALTER COLUMN cliente_wa DROP NOT NULL;
   `)
   console.log('✅ Base de datos PostgreSQL lista')
 }
