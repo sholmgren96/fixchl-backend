@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { db } from '../db/database.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { enviarMensajeWA } from '../services/whatsapp.js'
+import { sanitizarMensaje } from '../services/sanitizar.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -22,8 +23,9 @@ router.post('/:trabajoId/mensajes', async (req, res) => {
     const trabajo = await db.getTrabajo(parseInt(req.params.trabajoId))
     if (!trabajo || trabajo.tecnico_id !== req.tecnico.id)
       return res.status(403).json({ error: 'No autorizado' })
-    const msg = await db.createMensaje(trabajo.id, 'tecnico', req.body.contenido)
-    await enviarMensajeWA(trabajo.cliente_wa, req.body.contenido)
+    const contenido = sanitizarMensaje(req.body.contenido)
+    const msg = await db.createMensaje(trabajo.id, 'tecnico', contenido)
+    await enviarMensajeWA(trabajo.cliente_wa, contenido)
     res.json({ mensaje: msg })
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })

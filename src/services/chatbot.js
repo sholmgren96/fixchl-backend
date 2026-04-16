@@ -1,5 +1,6 @@
 import { db } from '../db/database.js'
 import { enviarMensajeWA, enviarLista, enviarBotones } from './whatsapp.js'
+import { sanitizarMensaje } from './sanitizar.js'
 
 const CATEGORIAS = ['Electricista', 'Gasfiter', 'Servicio de aseo', 'Pintor', 'Maestro general', 'Otro']
 const URGENCIAS  = ['Hoy mismo', 'Esta semana', 'Elegir fecha']
@@ -389,7 +390,7 @@ export async function procesarMensaje(numeroWA, texto) {
 
   // ── CHAT ACTIVO ───────────────────────────────────────────────────────────
   if (sesion.estado === 'chat_activo') {
-    if (sesion.trabajo_id) await db.createMensaje(sesion.trabajo_id, 'cliente', msg)
+    if (sesion.trabajo_id) await db.createMensaje(sesion.trabajo_id, 'cliente', sanitizarMensaje(msg))
     return
   }
 
