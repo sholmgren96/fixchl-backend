@@ -83,6 +83,93 @@ router.post('/tecnicos/:id/reactivar', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }) }
 })
 
+// Verificar técnico en SEC (solo Electricista / Gasfiter)
+router.get('/tecnicos/:id/verificar-sec', async (req, res) => {
+  try {
+    const tecnico = await db.getTecnico(req.params.id)
+    if (!tecnico) return res.status(404).json({ error: 'Técnico no encontrado' })
+
+    const categorias = await db.getCategorias(tecnico.id)
+    const cats = categorias.map(c => c.categoria)
+
+    const esElectrico = cats.includes('Electricista')
+    const esGas       = cats.includes('Gasfiter')
+
+    if (!esElectrico && !esGas) {
+      return res.json({ aplica: false, mensaje: 'Categoría no certificada por SEC' })
+    }
+
+    const tipo      = esElectrico ? 'ELECTRICO' : 'GAS'
+    const resultado = await consultarSEC(tecnico.rut, tipo)
+
+    await db.setSECEstado(tecnico.id, resultado.estado)
+    res.json({ aplica: true, ...resultado })
+  } catch (err) {
+    console.error('verificar-sec:', err)
+    res.status(500).json({ error: 'Error al consultar SEC' })
+  }
+})
+
+async function consultarSEC(rut, tipo) {
+  // Normalizar RUT: quitar puntos, mayúscula en K, mantener guión
+  const rutNorm = rut.replace(/\./g, '').toUpperCase()
+
+  const CATEGORIAS_SEC = {
+    ELECTRICO: ['ELECTRICO', 'ELÉCTRICO', 'E'],
+    GAS:       ['GAS', 'G'],
+  }
+
+  // Intentamos distintos nombres de campo que usa Struts en el SEC
+  const variantes = [
+    { tipoServicio: tipo, rut: rutNorm, apellidoPaterno: '', apellidoMaterno: '' },
+    { tipoInstalador: tipo, rut: rutNorm, apellidoPaterno: '', apellidoMaterno: '' },
+    { tipo, rut: rutNorm, apellidoPaterno: '', apellidoMaterno: '' },
+  ]
+
+  for (const campos of variantes) {
+    try {
+      const body = new URLSearchParams(campos)
+      const resp = await fetch(
+        'https://wlhttp.sec.cl/validadorInstaladores/sec/consulta.do',
+        {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent':   'Mozilla/5.0',
+            'Referer':      'https://wlhttp.sec.cl/validadorInstaladores/sec/consulta.do',
+          },
+          body:   body.toString(),
+          signal: AbortSignal.timeout(12000),
+        }
+      )
+
+      const html = await resp.text()
+
+      // Detectar errores de Struts (action mapping no encontrado)
+      if (html.includes('There is no Action mapped') || html.includes('Error 404')) continue
+
+      const htmlUp = html.toUpperCase()
+
+      if (htmlUp.includes('VIGENTE'))
+        return { estado: 'vigente',        detalle: 'Instalador registrado y vigente en SEC' }
+      if (htmlUp.includes('CADUCADO') || htmlUp.includes('VENCIDO') || htmlUp.includes('EXPIRADO'))
+        return { estado: 'caducado',       detalle: 'Licencia SEC caducada' }
+      if (
+        htmlUp.includes('NO SE ENCONTRARON') ||
+        htmlUp.includes('NO EXISTEN RESULTADOS') ||
+        htmlUp.includes('NO ENCONTRADO')
+      )
+        return { estado: 'no_registrado',  detalle: 'RUT no encontrado en registro SEC' }
+
+    } catch (err) {
+      // timeout u otro error de red — continuar con siguiente variante
+      console.warn('SEC variante falló:', err.message)
+    }
+  }
+
+  return { estado: 'error', detalle: 'No se pudo obtener respuesta del SEC' }
+}
+
 // Dashboard — estadísticas generales
 router.get('/stats', async (req, res) => {
   try {

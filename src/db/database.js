@@ -239,7 +239,7 @@ export const db = {
 
   async getTodosLosTecnicos() {
     const r = await query(
-      `SELECT id, nombre, rut, telefono, estado, disponible, rating, total_jobs, total_reviews, razon_rechazo, created_at
+      `SELECT id, nombre, rut, telefono, estado, disponible, rating, total_jobs, total_reviews, razon_rechazo, sec_estado, created_at
        FROM tecnicos ORDER BY created_at DESC`
     )
     return r.rows
@@ -279,10 +279,19 @@ export const db = {
 
   async getPendientes() {
     const r = await query(
-      `SELECT id, nombre, rut, telefono, estado, razon_rechazo, created_at
-       FROM tecnicos WHERE estado='pendiente' ORDER BY created_at ASC`
+      `SELECT t.id, t.nombre, t.rut, t.telefono, t.estado, t.razon_rechazo, t.sec_estado, t.created_at,
+              COALESCE(array_agg(tc.categoria) FILTER (WHERE tc.categoria IS NOT NULL), '{}') AS categorias
+       FROM tecnicos t
+       LEFT JOIN tecnico_categorias tc ON tc.tecnico_id = t.id
+       WHERE t.estado='pendiente'
+       GROUP BY t.id
+       ORDER BY t.created_at ASC`
     )
     return r.rows
+  },
+
+  async setSECEstado(id, secEstado) {
+    await query('UPDATE tecnicos SET sec_estado=$1 WHERE id=$2', [secEstado, id])
   },
 
   async getCedulaFoto(id) {
@@ -809,6 +818,7 @@ export async function initDb() {
   await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'activo'`)
   await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS cedula_foto TEXT`)
   await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS razon_rechazo TEXT`)
+  await query(`ALTER TABLE IF EXISTS tecnicos ADD COLUMN IF NOT EXISTS sec_estado TEXT`)
   await query(`
     CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
